@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meeting-recorder"
+version = "0.1.0"
+description = "Local meeting recorder for Linux (PipeWire + FFmpeg capture, faster-whisper transcription, LiteLLM/Ollama summarization)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "litellm>=1.40.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+meeting-recorder = "meeting_recorder.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["meeting_recorder*"]

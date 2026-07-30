@@ -1,0 +1,43 @@
+# Copy this file to ~/.config/meeting-recorder/config.yaml and edit it,
+# or point to a custom path with `meeting-recorder --config /path/to/config.yaml ...`.
+#
+# Every value here can also be set via environment variable or CLI flag.
+# Precedence (lowest to highest): built-in defaults -> this file -> environment
+# variables -> CLI flags.
+
+# Base directory where per-session recordings/transcripts/summaries are stored.
+# Defaults to $XDG_DATA_HOME/meeting-recorder/sessions (usually ~/.local/share/...).
+# data_dir: /home/me/Recordings/meetings
+
+audio:
+  sample_rate: 48000
+
+whisper:
+  # Any faster-whisper/CTranslate2 model size or path: tiny, base, small, medium,
+  # large-v3, or a local/HF model directory.
+  model_size: base
+  # cpu or cuda
+  device: cpu
+  # int8 is the fastest/lowest-memory option on CPU. Use float16 on GPU.
+  compute_type: int8
+  # Force a language (e.g. "en") or leave null to auto-detect.
+  language: null
+
+# LiteLLM is used as the abstraction layer for the summarization call, so the
+# same code path works whether you're pointing at a local Ollama server, a
+# hosted LiteLLM proxy, or any other LiteLLM-supported provider. Just swap
+# these three values -- no code changes required.
+llm:
+  # LiteLLM model string. For Ollama, this is "ollama/<model-name>".
+  # For a LiteLLM proxy or OpenAI-compatible endpoint, use the model name your
+  # provider expects (e.g. "openai/gpt-4o-mini", "litellm_proxy/my-model").
+  model: ollama/llama3.1
+  # Base URL of the inference server. Ollama's native API lives at
+  # http://localhost:11434 (LiteLLM calls /api/generate or /api/chat under the
+  # hood when the model is prefixed with "ollama/").
+  endpoint: http://localhost:11434
+  # API key, if your endpoint requires one. Local Ollama does not.
+  api_key: null
+  # Character budget per chunk before the transcript is map-reduced into
+  # multiple summarization calls. Lower this for small-context models.
+  chunk_char_limit: 6000

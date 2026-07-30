@@ -16,14 +16,13 @@ from meeting_recorder.config import LLMConfig
 from meeting_recorder.errors import SummarizationError
 
 SUMMARY_SYSTEM_PROMPT = (
-    "You are an assistant that writes clear, concise meeting summaries from "
+    "You are an assistant that writes clear, concise meeting summaries in Markdown from "
     "raw speech-to-text transcripts. Transcripts may contain minor "
     "transcription errors, filler words, or missing punctuation -- do your "
-    "best to infer intended meaning. Structure your response with:\n"
-    "1. A short overall summary (2-4 sentences)\n"
-    "2. Key discussion points (bullet list)\n"
-    "3. Decisions made (bullet list, or 'None' if none)\n"
-    "4. Action items with owners if mentioned (bullet list, or 'None' if none)"
+    "best to infer intended meaning. Return Markdown only, using these level-two "
+    "headings: `## Summary`, `## Key discussion points`, `## Decisions`, and "
+    "`## Action items`. Use Markdown bullet lists for the final three sections; "
+    "write `None` beneath a section when there is nothing to report."
 )
 
 PARTIAL_SYSTEM_PROMPT = (
@@ -116,7 +115,7 @@ def summarize_transcript(transcript: str, config: LLMConfig) -> str:
     return _call_llm(SUMMARY_SYSTEM_PROMPT, final_prompt, config)
 
 
-def save_summary(summary: str, session_dir: Path, filename: str = "summary.txt") -> Path:
+def save_summary(summary: str, session_dir: Path, filename: str = "summary.md") -> Path:
     path = session_dir / filename
     path.write_text(summary, encoding="utf-8")
     return path

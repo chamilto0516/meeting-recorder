@@ -116,6 +116,12 @@ meeting-recorder start --mic alsa_input.usb-Blue_Microphones_Yeti-00 \
 
 # pin a specific system audio source instead of the default sink's monitor
 meeting-recorder start --system-source alsa_output.usb-Headset.monitor
+
+# label a session; its folder becomes e.g. 2026-07-30_13-38-44_First-AI-Class-Lecture
+meeting-recorder start --name "First: AI Class(Lecture"
+
+# record a lecture/class or CBT with system audio only (no local microphone)
+meeting-recorder start --lecture
 ```
 
 Join your Zoom/Meet/browser call as usual -- capture is independent of which
@@ -174,10 +180,14 @@ mixed.wav         # mic(s) + system mixed down, used for transcription
 ffmpeg.log        # ffmpeg's own log for that session
 capture-validation.json  # per-track WAV format/duration validation report
 transcript.txt    # faster-whisper output
-summary.txt       # LLM summary
+summary.md        # Markdown LLM summary
 ```
 
 Override the base directory with `--data-dir` or `MEETING_RECORDER_DATA_DIR`.
+The optional `--name` (or `--meeting-name`) is saved as the meeting display
+name and converted to a safe, readable folder suffix: punctuation and path
+characters become hyphens, repeated hyphens are collapsed, and the timestamp
+remains first to prevent collisions.
 
 ## Configuration
 

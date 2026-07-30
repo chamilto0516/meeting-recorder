@@ -110,6 +110,18 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument(
         "--sample-rate", type=int, help="Recording sample rate in Hz (default: 48000)"
     )
+    start_p.add_argument(
+        "--name", "--meeting-name",
+        dest="meeting_name",
+        metavar="NAME",
+        help="Optional meeting name appended safely to the timestamped session folder",
+    )
+    start_p.add_argument(
+        "--lecture", "--lecture-mode",
+        dest="lecture",
+        action="store_true",
+        help="Record only system audio; do not capture any microphone",
+    )
     _add_common_processing_args(start_p)
     start_p.set_defaults(func=cmd_start)
 
@@ -186,13 +198,19 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
                 )
             return 1
 
+        if getattr(args, "lecture", False) and args.mics:
+            logger.error("--lecture cannot be combined with --mic; lecture mode records system audio only.")
+            return 1
+
         audio.check_dependencies()
-        mics = args.mics or [audio.get_default_source()]
+        mics = [] if getattr(args, "lecture", False) else (args.mics or [audio.get_default_source()])
         system_source = args.system_source or audio.get_default_sink_monitor()
         session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if getattr(args, "meeting_name", None):
+            session_id += "_" + state.sanitize_session_name(args.meeting_name)
         session_dir = cfg.data_dir / session_id
 
-        logger.info("Mic source(s): %s", ", ".join(mics))
+        logger.info("Mic source(s): %s", ", ".join(mics) if mics else "none (lecture mode)")
         logger.info("System audio source: %s", system_source)
         logger.info("Session directory: %s", session_dir)
         handle = audio.start_recording(mics, system_source, session_dir, cfg.sample_rate)
@@ -208,6 +226,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             system_source=system_source,
             sample_rate=cfg.sample_rate,
             log_file=str(handle.log_file),
+            meeting_name=getattr(args, "meeting_name", None),
             whisper=cfg.whisper.to_dict(),
             llm=cfg.llm.to_session_dict(),
         )
@@ -396,7 +415,9 @@ def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         print(f"Status:    {'recording' if verified else 'UNVERIFIED OR STALE'}")
         print(f"PID:       {session.pid}")
         print(f"Started:   {session.started_at}")
-        print(f"Mic(s):    {', '.join(session.mics)}")
+        if session.meeting_name:
+            print(f"Name:      {session.meeting_name}")
+        print(f"Mic(s):    {', '.join(session.mics) if session.mics else 'none (lecture mode)'}")
         print(f"System:    {session.system_source}")
         print(f"Directory: {session.session_dir}")
         return 0 if verified else 1

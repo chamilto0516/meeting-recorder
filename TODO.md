@@ -2,10 +2,14 @@
 
 ## Next
 
-- [ ] Add an optional meeting-name flag to `start`. Use a safe, human-readable
-  name in the session-folder name while retaining a timestamp to prevent collisions.
-- [ ] Make Markdown the default summary output format (likely a summarization
-  prompt/config default change).
+- [ ] Build a simple local GUI that runs through the project environment and
+  can start, stop, monitor an active recording, name sessions, open outputs,
+  and notify when processing is ready. Design the CLI/session lifecycle as its
+  backend rather than duplicating recording logic in the GUI.
+- [x] Add an optional `--name` flag to `start` that creates a safe,
+  human-readable timestamped session folder.
+- [x] Add a system-audio-only lecture/class capture mode with no microphone.
+- [x] Make Markdown the default summary output format.
 - [ ] Investigate Bluetooth mic/speaker acoustic echo and cross-talk. Determine
   whether PipeWire echo cancellation, source selection, or post-processing can
   improve transcripts when the mic hears meeting audio from the speakers.

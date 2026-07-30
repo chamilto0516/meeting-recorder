@@ -10,12 +10,14 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional
+import unicodedata
 
 from meeting_recorder.errors import StateError
 
@@ -61,6 +63,15 @@ class ProcessIdentity:
     process_group: int
 
 
+def sanitize_session_name(name: str, max_length: int = 80) -> str:
+    """Create a readable, path-safe suffix without permitting traversal."""
+    normalized = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    safe = re.sub(r"[^A-Za-z0-9]+", "-", normalized).strip("-")[:max_length].rstrip("-")
+    if not safe:
+        raise StateError("Meeting name must include at least one letter or number.")
+    return safe
+
+
 @dataclass
 class Session:
     session_id: str
@@ -74,6 +85,7 @@ class Session:
     system_source: str
     sample_rate: int
     log_file: Optional[str] = None
+    meeting_name: Optional[str] = None
     whisper: dict[str, Any] = field(default_factory=dict)
     # Deliberately excludes api_key.  Credentials are resolved at stop time.
     llm: dict[str, Any] = field(default_factory=dict)

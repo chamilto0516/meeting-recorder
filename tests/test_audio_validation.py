@@ -28,6 +28,14 @@ class CaptureValidationTests(unittest.TestCase):
         self.assertEqual(tracks["mic0"], Path("/tmp/session/mic0.wav"))
         self.assertEqual(mixed, Path("/tmp/session/mixed.wav"))
 
+    def test_ffmpeg_command_supports_system_audio_only_capture(self) -> None:
+        command, tracks, mixed = audio._build_ffmpeg_command(
+            [], "system.monitor", Path("/tmp/session"), 48000
+        )
+        self.assertEqual(list(tracks), ["system"])
+        self.assertEqual(command.count("pcm_s16le"), 2)
+        self.assertEqual(mixed, Path("/tmp/session/mixed.wav"))
+
     def test_accepts_complete_consistent_pcm_tracks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

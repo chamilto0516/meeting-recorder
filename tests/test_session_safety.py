@@ -42,6 +42,15 @@ def write_wav(path: Path, sample_rate: int = 48000, frames: int = 32) -> None:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_session_name_is_human_readable_and_path_safe(self) -> None:
+        self.assertEqual(
+            state.sanitize_session_name("First: AI Class(Lecture"),
+            "First-AI-Class-Lecture",
+        )
+        self.assertEqual(state.sanitize_session_name("../../  résumé  "), "resume")
+        with self.assertRaisesRegex(Exception, "letter or number"):
+            state.sanitize_session_name("///")
+
     def test_state_is_private_and_does_not_contain_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

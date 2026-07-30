@@ -122,6 +122,9 @@ meeting-recorder start --name "First: AI Class(Lecture"
 
 # record a lecture/class or CBT with system audio only (no local microphone)
 meeting-recorder start --lecture
+
+# record a tabletop-RPG game: one DM mic plus player/system audio
+meeting-recorder start --game --name "The Ruins of Asterfall"
 ```
 
 Join your Zoom/Meet/browser call as usual -- capture is independent of which
@@ -159,6 +162,14 @@ meeting-recorder retry
 `retry` starts at the first unfinished stage: it does not re-transcribe when a
 valid transcript was already saved. While a session is awaiting processing,
 finish it with `retry` before starting a new recording.
+
+### Tabletop-RPG game mode
+
+`--game` records one DM microphone and the player/system-audio track, then
+uses the game continuity prompt rather than the meeting-summary prompt. It
+creates `dm-continuity-brief.md`, `player-recap.md`, and an archival combined
+`game-summary.md`. The transcript remains mixed deliberately: the prompt does
+not trust speaker diarization when audio overlaps or a microphone hears output.
 
 ### Other commands
 

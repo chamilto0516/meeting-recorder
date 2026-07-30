@@ -11,9 +11,15 @@ LiteLLM-supported provider later is just a matter of changing `model`,
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 
 from meeting_recorder.config import LLMConfig
 from meeting_recorder.errors import SummarizationError
+from meeting_recorder.game_prompt import (
+    GAME_PARTIAL_PROMPT,
+    GAME_REDUCTION_PROMPT,
+    GAME_SYSTEM_PROMPT,
+)
 
 SUMMARY_SYSTEM_PROMPT = (
     "You are an assistant that writes clear, concise meeting summaries in Markdown from "
@@ -83,39 +89,103 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
         ) from exc
 
 
-def summarize_transcript(transcript: str, config: LLMConfig) -> str:
-    """Summarize `transcript` via LiteLLM, map-reducing across chunks if the
-    transcript is longer than `config.chunk_char_limit`."""
+def _group_texts(texts: list[str], max_chars: int) -> list[str]:
+    groups: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for text in texts:
+        added = len(text) + (2 if current else 0)
+        if current and current_length + added > max_chars:
+            groups.append("\n\n".join(current))
+            current = [text]
+            current_length = len(text)
+        else:
+            current.append(text)
+            current_length += added
+    if current:
+        groups.append("\n\n".join(current))
+    return groups
+
+
+def _hierarchical_summary(
+    transcript: str,
+    config: LLMConfig,
+    partial_prompt: str,
+    reduction_prompt: str,
+) -> str:
+    """Map-reduce while keeping every individual LLM input bounded in size."""
     transcript = transcript.strip()
     if not transcript:
         raise SummarizationError("Transcript is empty; nothing to summarize.")
-
     chunks = chunk_text(transcript, config.chunk_char_limit)
-
     if len(chunks) == 1:
-        return _call_llm(SUMMARY_SYSTEM_PROMPT, chunks[0], config)
-
-    partial_summaries = [
+        return chunks[0]
+    summaries = [
         _call_llm(
-            PARTIAL_SYSTEM_PROMPT,
+            partial_prompt,
             f"Transcript part {i + 1} of {len(chunks)}:\n\n{chunk}",
             config,
         )
         for i, chunk in enumerate(chunks)
     ]
-    combined = "\n\n".join(
-        f"--- Part {i + 1} summary ---\n{summary}"
-        for i, summary in enumerate(partial_summaries)
+    while len(summaries) > 1:
+        groups = _group_texts(summaries, config.chunk_char_limit)
+        if len(groups) == len(summaries):
+            # A single model response can exceed our preferred bound. It is
+            # still safer to reduce it than to send every prior result at once.
+            groups = ["\n\n".join(summaries)]
+        summaries = [
+            _call_llm(reduction_prompt, group, config)
+            for group in groups
+        ]
+    return summaries[0]
+
+
+def summarize_transcript(transcript: str, config: LLMConfig) -> str:
+    """Produce the standard Markdown meeting summary."""
+    condensed = _hierarchical_summary(
+        transcript,
+        config,
+        PARTIAL_SYSTEM_PROMPT,
+        "Combine these meeting notes accurately and compactly, preserving decisions, owners, and action items.",
     )
-    final_prompt = (
-        "The following are summaries of consecutive parts of a single "
-        "meeting transcript. Combine them into one cohesive meeting summary "
-        f"following the requested structure.\n\n{combined}"
+    return _call_llm(SUMMARY_SYSTEM_PROMPT, condensed, config)
+
+
+@dataclass(frozen=True)
+class GameSummaries:
+    dm_brief: str
+    player_recap: str
+
+
+def summarize_game(transcript: str, config: LLMConfig) -> GameSummaries:
+    """Generate distinct DM and player documents from a mixed game transcript."""
+    condensed = _hierarchical_summary(
+        transcript, config, GAME_PARTIAL_PROMPT, GAME_REDUCTION_PROMPT
     )
-    return _call_llm(SUMMARY_SYSTEM_PROMPT, final_prompt, config)
+    dm_brief = _call_llm(
+        GAME_SYSTEM_PROMPT + "\n\nProduce OUTPUT 1 only. Start exactly with '# DM Continuity Brief'.",
+        condensed,
+        config,
+    )
+    player_recap = _call_llm(
+        GAME_SYSTEM_PROMPT + "\n\nProduce OUTPUT 2 only. Start exactly with '# Player Recap'.",
+        condensed,
+        config,
+    )
+    return GameSummaries(dm_brief=dm_brief, player_recap=player_recap)
 
 
 def save_summary(summary: str, session_dir: Path, filename: str = "summary.md") -> Path:
     path = session_dir / filename
     path.write_text(summary, encoding="utf-8")
     return path
+
+
+def save_game_summaries(summaries: GameSummaries, session_dir: Path) -> tuple[Path, Path, Path]:
+    """Save separate game deliverables plus a combined archival report."""
+    dm_path = save_summary(summaries.dm_brief, session_dir, "dm-continuity-brief.md")
+    player_path = save_summary(summaries.player_recap, session_dir, "player-recap.md")
+    combined = f"{summaries.dm_brief.strip()}\n\n---\n\n{summaries.player_recap.strip()}\n"
+    combined_path = save_summary(combined, session_dir, "game-summary.md")
+    return dm_path, player_path, combined_path

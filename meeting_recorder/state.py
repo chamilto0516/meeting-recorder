@@ -25,6 +25,7 @@ APP_NAME = "meeting-recorder"
 STATE_VERSION = 4
 SUPPORTED_STATE_VERSIONS = {2, 3, STATE_VERSION}
 SESSION_STATUSES = {"recording", "recorded", "transcribed", "capture_failed"}
+SESSION_MODES = {"meeting", "game"}
 
 
 def state_dir() -> Path:
@@ -86,6 +87,7 @@ class Session:
     sample_rate: int
     log_file: Optional[str] = None
     meeting_name: Optional[str] = None
+    mode: str = "meeting"
     whisper: dict[str, Any] = field(default_factory=dict)
     # Deliberately excludes api_key.  Credentials are resolved at stop time.
     llm: dict[str, Any] = field(default_factory=dict)
@@ -125,6 +127,8 @@ class Session:
             raise StateError("Session state contains a credential and was not used.")
         if session.status not in SESSION_STATUSES:
             raise StateError("Session state has an unsupported status and was not used.")
+        if session.mode not in SESSION_MODES:
+            raise StateError("Session state has an unsupported mode and was not used.")
         if session.status == "recording" and session.process is None:
             raise StateError("Recording session state lacks a process identity and was not used.")
         return session

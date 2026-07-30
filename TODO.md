@@ -9,6 +9,11 @@
 - [x] Add an optional `--name` flag to `start` that creates a safe,
   human-readable timestamped session folder.
 - [x] Add a system-audio-only lecture/class capture mode with no microphone.
+- [ ] Give lecture mode its own summarization prompt and output structure,
+  rather than treating a lecture like a business meeting.
+- [x] Add a tabletop-RPG game mode with a dedicated long-session prompt that
+  summarizes plot events, NPCs, locations, discoveries, unresolved hooks, and
+  player goals. Test it against a roughly three-hour game session.
 - [x] Make Markdown the default summary output format.
 - [ ] Investigate Bluetooth mic/speaker acoustic echo and cross-talk. Determine
   whether PipeWire echo cancellation, source selection, or post-processing can

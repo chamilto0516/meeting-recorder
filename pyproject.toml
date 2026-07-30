@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meeting-recorder"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local meeting recorder for Linux (PipeWire + FFmpeg capture, faster-whisper transcription, LiteLLM/Ollama summarization)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -20,3 +20,6 @@ meeting-recorder = "meeting_recorder.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["meeting_recorder*"]
+
+[tool.setuptools.package-data]
+meeting_recorder = ["prompts/*.txt"]

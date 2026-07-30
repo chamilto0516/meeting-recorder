@@ -42,6 +42,15 @@ def write_wav(path: Path, sample_rate: int = 48000, frames: int = 32) -> None:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_game_mode_is_persisted_and_cli_exposes_the_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = make_session(Path(temporary))
+            session.mode = "game"
+            self.assertEqual(state.Session.from_dict(session.to_dict()).mode, "game")
+        args = cli.build_parser().parse_args(["start", "--game"])
+        self.assertTrue(args.game)
+        self.assertFalse(args.lecture)
+
     def test_session_name_is_human_readable_and_path_safe(self) -> None:
         self.assertEqual(
             state.sanitize_session_name("First: AI Class(Lecture"),

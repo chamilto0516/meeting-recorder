@@ -122,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Record only system audio; do not capture any microphone",
     )
+    start_p.add_argument(
+        "--game",
+        action="store_true",
+        help="Record a tabletop-RPG session: one DM mic plus player system audio",
+    )
     _add_common_processing_args(start_p)
     start_p.set_defaults(func=cmd_start)
 
@@ -198,12 +203,20 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
                 )
             return 1
 
-        if getattr(args, "lecture", False) and args.mics:
+        lecture_mode = getattr(args, "lecture", False)
+        game_mode = getattr(args, "game", False)
+        if lecture_mode and game_mode:
+            logger.error("--lecture and --game cannot be combined.")
+            return 1
+        if lecture_mode and args.mics:
             logger.error("--lecture cannot be combined with --mic; lecture mode records system audio only.")
+            return 1
+        if game_mode and args.mics and len(args.mics) != 1:
+            logger.error("--game supports exactly one DM microphone; pass at most one --mic.")
             return 1
 
         audio.check_dependencies()
-        mics = [] if getattr(args, "lecture", False) else (args.mics or [audio.get_default_source()])
+        mics = [] if lecture_mode else (args.mics or [audio.get_default_source()])
         system_source = args.system_source or audio.get_default_sink_monitor()
         session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if getattr(args, "meeting_name", None):
@@ -227,6 +240,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             sample_rate=cfg.sample_rate,
             log_file=str(handle.log_file),
             meeting_name=getattr(args, "meeting_name", None),
+            mode="game" if game_mode else "meeting",
             whisper=cfg.whisper.to_dict(),
             llm=cfg.llm.to_session_dict(),
         )
@@ -351,14 +365,17 @@ def _process_session(args_session: state.Session, args: argparse.Namespace, cfg:
         _record_processing_error(session, exc)
         raise MeetingRecorderError(f"Could not read transcript at {transcript_path}: {exc}") from exc
 
-    logger.info(
-        "Summarizing via LiteLLM (model=%s, endpoint=%s)...",
-        llm_cfg.model,
-        llm_cfg.endpoint,
-    )
+    logger.info("Summarizing via LiteLLM (model=%s, endpoint=%s)...", llm_cfg.model, llm_cfg.endpoint)
     try:
-        summary = summarize.summarize_transcript(transcript, llm_cfg)
-        summary_path = summarize.save_summary(summary, session_dir)
+        if session.mode == "game":
+            game_summaries = summarize.summarize_game(transcript, llm_cfg)
+            dm_path, player_path, summary_path = summarize.save_game_summaries(game_summaries, session_dir)
+            logger.info("DM continuity brief saved to %s", dm_path)
+            logger.info("Player recap saved to %s", player_path)
+            summary = game_summaries.dm_brief
+        else:
+            summary = summarize.summarize_transcript(transcript, llm_cfg)
+            summary_path = summarize.save_summary(summary, session_dir)
     except Exception as exc:
         _record_processing_error(session, exc)
         raise
@@ -417,6 +434,7 @@ def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         print(f"Started:   {session.started_at}")
         if session.meeting_name:
             print(f"Name:      {session.meeting_name}")
+        print(f"Mode:      {session.mode}")
         print(f"Mic(s):    {', '.join(session.mics) if session.mics else 'none (lecture mode)'}")
         print(f"System:    {session.system_source}")
         print(f"Directory: {session.session_dir}")

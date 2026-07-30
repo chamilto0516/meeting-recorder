@@ -13,6 +13,14 @@ class RecordingError(MeetingRecorderError):
     """Raised when starting/stopping the background recording fails."""
 
 
+class CaptureValidationError(RecordingError):
+    """Raised when recorded audio tracks are missing, corrupt, or inconsistent."""
+
+
+class StateError(MeetingRecorderError):
+    """Raised when active session state cannot be safely used."""
+
+
 class NoActiveSessionError(MeetingRecorderError):
     """Raised when `stop`/`status` is invoked but no session is recorded."""
 

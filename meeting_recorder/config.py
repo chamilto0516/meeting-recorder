@@ -76,6 +76,12 @@ class LLMConfig:
             "chunk_char_limit": self.chunk_char_limit,
         }
 
+    def to_session_dict(self) -> dict[str, Any]:
+        """Return the non-secret LLM settings safe to persist with a session."""
+        data = self.to_dict()
+        data.pop("api_key")
+        return data
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LLMConfig":
         return cls(**{k: data.get(k, getattr(cls, k, None)) for k in _fields(cls)})

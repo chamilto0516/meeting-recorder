@@ -140,10 +140,25 @@ meeting-recorder stop --skip-transcription    # only stop the recording
 meeting-recorder stop --llm-model ollama/mistral --llm-endpoint http://localhost:11434
 ```
 
+### Retry interrupted processing
+
+If transcription or summarization fails, the recording session is retained and
+`status` shows the completed stage plus the last error. Fix the underlying
+issue (for example, start Ollama or choose a different model), then resume:
+
+```bash
+meeting-recorder retry
+```
+
+`retry` starts at the first unfinished stage: it does not re-transcribe when a
+valid transcript was already saved. While a session is awaiting processing,
+finish it with `retry` before starting a new recording.
+
 ### Other commands
 
 ```bash
-meeting-recorder status    # is a recording currently active?
+meeting-recorder status    # recording status or a retryable processing stage
+meeting-recorder retry     # resume a saved transcription/summarization
 ```
 
 ## Where files go
@@ -157,6 +172,7 @@ mic1.wav          # raw mic 2 track (if a second --mic was given)
 system.wav        # raw system audio track
 mixed.wav         # mic(s) + system mixed down, used for transcription
 ffmpeg.log        # ffmpeg's own log for that session
+capture-validation.json  # per-track WAV format/duration validation report
 transcript.txt    # faster-whisper output
 summary.txt       # LLM summary
 ```
@@ -178,7 +194,12 @@ Settings can be set in three layers, from lowest to highest precedence:
    `MEETING_RECORDER_DATA_DIR`, `MEETING_RECORDER_SAMPLE_RATE`)
 4. CLI flags (`--whisper-model`, `--llm-endpoint`, etc.)
 
-The whisper/LLM settings you pass to `start` are captured into that
+LLM API keys are never written to the active-session state file. If a remote
+LLM needs a key, provide it through the config file, `MEETING_RECORDER_LLM_API_KEY`,
+or `meeting-recorder stop --llm-api-key ...`. A key supplied only to `start`
+must be supplied again when processing at `stop` time.
+
+The non-secret whisper/LLM settings you pass to `start` are captured into that
 session's state so `stop` (which may run minutes or hours later, in a
 different shell) uses the same settings automatically -- but you can also
 override them again at `stop` time (e.g. to re-summarize with a different
@@ -234,9 +255,14 @@ meeting_recorder/
   to `ffmpeg.log` in the session directory); this usually means a device
   name from `--mic`/`--system-source` doesn't exist or is already exclusively
   in use. Re-run `meeting-recorder list-devices` to confirm exact names.
-* **A recording is already in progress** -- run `meeting-recorder stop`
-  (or `meeting-recorder status` to check first). If the process actually
-  crashed, `start` will detect the stale state and let you proceed.
+* **Capture validation failed** -- the recorder will not send incomplete or
+  corrupt audio to Whisper. Inspect `capture-validation.json` and `ffmpeg.log`
+  in the session directory; they identify the affected track and any relevant
+  FFmpeg error. A valid silent track is not treated as a failure.
+* **Session state is `UNVERIFIED OR STALE`** -- for safety, the recorder will
+  never signal a PID unless it still matches the FFmpeg process it launched.
+  Confirm no recording is active, then remove the state file path printed by
+  the command before starting another session.
 * **Ollama connection errors during `stop`** -- make sure `ollama serve` is
   running and the model in your config has been pulled
   (`ollama pull llama3.1`).

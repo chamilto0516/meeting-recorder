@@ -25,6 +25,7 @@ import json
 import os
 import shutil
 import signal
+import shlex
 import subprocess
 import time
 import wave
@@ -203,7 +204,10 @@ def _build_ffmpeg_command(
     labels = [f"mic{i}" for i in range(len(mics))] + ["system"]
     sources = list(mics) + [system_source]
 
-    cmd: list[str] = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning", "-n"]
+    # ``info`` is intentional: warning-level output does not include the
+    # normal shutdown line (including whether FFmpeg received SIGINT), which
+    # is essential when a detached recording stops unexpectedly.
+    cmd: list[str] = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "info", "-n"]
     for source in sources:
         cmd += ["-thread_queue_size", "512", "-f", "pulse", "-i", source]
 
@@ -227,6 +231,18 @@ def _build_ffmpeg_command(
     ]
 
     return cmd, track_files, mixed_file
+
+
+def log_recording_event(log_file: Path, message: str) -> None:
+    """Append recorder-owned diagnostics without affecting capture."""
+    try:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        with log_file.open("a", encoding="utf-8") as log_fh:
+            log_fh.write(f"[{timestamp}] meeting-recorder: {message}\n")
+    except OSError:
+        # FFmpeg's output remains the primary diagnostic. Logging must never
+        # make an otherwise usable recording fail to start or stop.
+        pass
 
 
 def start_recording(
@@ -256,7 +272,17 @@ def start_recording(
     )
 
     log_file = session_dir / "ffmpeg.log"
-    with open(log_file, "wb") as log_fh:
+    log_file.write_text("", encoding="utf-8")
+    # Append mode is important because FFmpeg continues writing concurrently;
+    # otherwise recorder-owned events can be overwritten by FFmpeg's buffered
+    # output when the process exits.
+    with open(log_file, "a", encoding="utf-8") as log_fh:
+        log_fh.write(f"meeting-recorder command: {shlex.join(cmd)}\n")
+        log_fh.write(
+            f"meeting-recorder sources: mics={mics!r}, system={system_source!r}, "
+            f"sample_rate={sample_rate}\n"
+        )
+        log_fh.flush()
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -271,6 +297,7 @@ def start_recording(
     # Give ffmpeg a moment to fail fast and create valid WAV headers.
     time.sleep(0.75)
     if proc.poll() is not None:
+        log_recording_event(log_file, f"ffmpeg exited during startup with code {proc.returncode}")
         log_tail = log_file.read_text(errors="replace")[-2000:]
         raise RecordingError(
             f"ffmpeg exited immediately (code {proc.returncode}). Log tail:\n{log_tail}"
@@ -284,14 +311,30 @@ def start_recording(
         raise RecordingError("Could not verify identity of the FFmpeg recording process.")
 
     expected_files = {**track_files, "mixed": mixed_file}
-    startup_errors = _validate_tracks(expected_files, sample_rate, require_frames=False)
+    # A WAV header is not necessarily readable until FFmpeg finalizes the
+    # file.  Parsing active files here falsely reports "unreadable WAV" and
+    # immediately sends SIGINT, which is exactly the failure seen in game
+    # mode. Full format/duration validation belongs in validate_capture().
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and proc.poll() is None:
+        if all(path.exists() and path.stat().st_size > 0 for path in expected_files.values()):
+            break
+        time.sleep(0.1)
+    startup_errors = [
+        f"{name}: output file was not created"
+        for name, path in expected_files.items()
+        if not path.exists() or path.stat().st_size == 0
+    ]
     if startup_errors:
+        log_recording_event(log_file, "startup output validation failed: " + "; ".join(startup_errors))
         stop_recording(proc.pid, process)
         log_tail = log_file.read_text(errors="replace")[-2000:]
         raise RecordingError(
             "ffmpeg did not create valid output headers: " + "; ".join(startup_errors)
             + f"\nLog tail:\n{log_tail}"
         )
+
+    log_recording_event(log_file, f"ffmpeg started successfully (pid={proc.pid}); output headers validated")
 
     return RecordingHandle(
         pid=proc.pid,

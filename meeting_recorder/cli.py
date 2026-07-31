@@ -264,6 +264,11 @@ def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             )
             return 1
         if not audio.verify_recording_process(session.pid, session.process):
+            if session.log_file:
+                audio.log_recording_event(
+                    Path(session.log_file),
+                    f"stop requested but recording process could not be verified (pid={session.pid})",
+                )
             logger.error(
                 "Session process cannot be verified safely; no signal was sent and "
                 "state was retained. Confirm the recorder is stopped, then remove %s.",
@@ -272,9 +277,18 @@ def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             return 1
 
         logger.info("Stopping recording (pid %s)...", session.pid)
+        if session.log_file:
+            audio.log_recording_event(Path(session.log_file), f"stop requested (pid={session.pid})")
         was_running = audio.stop_recording(session.pid, session.process)
         if not was_running:
+            if session.log_file:
+                audio.log_recording_event(
+                    Path(session.log_file),
+                    f"recording process was already gone when stop was requested (pid={session.pid})",
+                )
             logger.warning("Recording process exited before it could be stopped.")
+        elif session.log_file:
+            audio.log_recording_event(Path(session.log_file), f"stop completed (pid={session.pid})")
         session.status = "recorded"
         session.ended_at = datetime.now(timezone.utc).isoformat()
         session.last_error = None

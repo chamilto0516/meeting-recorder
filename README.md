@@ -279,7 +279,9 @@ meeting_recorder/
 * **Capture validation failed** -- the recorder will not send incomplete or
   corrupt audio to Whisper. Inspect `capture-validation.json` and `ffmpeg.log`
   in the session directory; they identify the affected track and any relevant
-  FFmpeg error. A valid silent track is not treated as a failure.
+  FFmpeg error. The FFmpeg log also records the exact command, selected
+  sources, startup-header validation, and stop/exit events. A valid silent
+  track is not treated as a failure.
 * **Session state is `UNVERIFIED OR STALE`** -- for safety, the recorder will
   never signal a PID unless it still matches the FFmpeg process it launched.
   Confirm no recording is active, then remove the state file path printed by

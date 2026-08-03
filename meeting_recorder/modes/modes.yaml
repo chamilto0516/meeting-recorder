@@ -1,5 +1,6 @@
 modes:
   meeting:
+    description: General meetings with summaries and action items
     capture: mic-and-system
     mics: {min: 1, max: null}
     prompt: meeting.md
@@ -8,6 +9,7 @@ modes:
         title: Meeting Summary
         instruction: Summarize the meeting for participants.
   game:
+    description: Tabletop RPG sessions with DM and player recaps
     capture: mic-and-system
     mics: {min: 1, max: 1}
     prompt: game.md
@@ -22,6 +24,7 @@ modes:
         title: Game Summary Archive
         combine: [dm-continuity-brief.md, player-recap.md]
   lecture:
+    description: Lectures or classes as study-ready notes
     capture: system-only
     mics: {min: 0, max: 0}
     prompt: lecture.md
@@ -30,6 +33,7 @@ modes:
         title: Lecture Notes
         instruction: Produce study-ready lecture notes.
   cbt:
+    description: Computer-based training as practical reference notes
     capture: system-only
     mics: {min: 0, max: 0}
     prompt: cbt.md
@@ -38,6 +42,7 @@ modes:
         title: CBT Notes
         instruction: Produce practical computer-based-training notes.
   journal:
+    description: Spoken personal reflections as a journal entry
     capture: mic-only
     mics: {min: 1, max: 1}
     prompt: journal.md

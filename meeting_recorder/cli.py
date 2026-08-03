@@ -65,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Record a local meeting (mic + system audio) via PipeWire/FFmpeg, "
             "then transcribe with faster-whisper and summarize with an LLM via LiteLLM."
         ),
+        epilog="Use 'meeting-recorder COMMAND --help' to see options for a command, "
+        "for example 'meeting-recorder start --help'.",
     )
     parser.add_argument(
         "--config",
@@ -82,7 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    start_p = subparsers.add_parser("start", help="Start a background recording")
+    start_p = subparsers.add_parser(
+        "start",
+        help="Start a background recording (use 'start --help' for recording options)",
+    )
     start_p.add_argument(
         "--mode", default="meeting", metavar="MODE",
         help="Recording mode (default: meeting; available modes are read from the packaged registry)",
@@ -166,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
         "list-devices", help="List available PipeWire/Pulse audio sources"
     )
     list_p.set_defaults(func=cmd_list_devices)
+
+    modes_p = subparsers.add_parser(
+        "list-modes", help="List available recording modes"
+    )
+    modes_p.set_defaults(func=cmd_list_modes)
 
     return parser
 
@@ -497,6 +507,34 @@ def cmd_list_devices(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int
         "\nUse '--mic <name>' (repeatable) and '--system-source <name>' with "
         "'meeting-recorder start' to override the defaults."
     )
+    return 0
+
+
+def _mode_capture_label(capture: str) -> str:
+    return {
+        "mic-and-system": "mic + system",
+        "system-only": "system only",
+        "mic-only": "mic only",
+    }[capture]
+
+
+def _mode_mic_label(mode: modes.ModeDefinition) -> str:
+    if mode.max_mics is None:
+        return f"{mode.min_mics}+"
+    if mode.min_mics == mode.max_mics:
+        return str(mode.min_mics)
+    return f"{mode.min_mics}-{mode.max_mics}"
+
+
+def cmd_list_modes(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+    print("Available recording modes:\n")
+    print(f"{'MODE':<8} {'CAPTURE':<15} {'MICS':<4} DESCRIPTION")
+    for name in sorted(modes.load_modes()):
+        mode = modes.get_mode(name)
+        print(
+            f"{mode.name:<8} {_mode_capture_label(mode.capture):<15} "
+            f"{_mode_mic_label(mode):<4} {mode.description}"
+        )
     return 0
 
 

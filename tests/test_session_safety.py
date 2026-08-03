@@ -42,6 +42,17 @@ def write_wav(path: Path, sample_rate: int = 48000, frames: int = 32) -> None:
 
 
 class StateSafetyTests(unittest.TestCase):
+    def test_start_help_lists_recording_options(self) -> None:
+        parser = cli.build_parser()
+        subparsers = next(
+            action for action in parser._actions if getattr(action, "choices", None)
+        )
+        help_text = subparsers.choices["start"].format_help()
+
+        self.assertIn("--mode MODE", help_text)
+        self.assertIn("--mic SOURCE", help_text)
+        self.assertIn("--name NAME, --meeting-name NAME", help_text)
+
     def test_mode_is_persisted_and_cli_defaults_to_meeting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = make_session(Path(temporary))

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from argparse import Namespace
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from meeting_recorder import config, modes, summarize
+from meeting_recorder import cli, config, modes, summarize
 from meeting_recorder.errors import SummarizationError
 
 
@@ -16,9 +19,32 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(registry["lecture"].capture, "system-only")
         self.assertEqual(registry["cbt"].max_mics, 0)
         self.assertEqual(registry["journal"].capture, "mic-only")
+        self.assertEqual(
+            registry["meeting"].description,
+            "General meetings with summaries and action items",
+        )
         self.assertEqual([artifact.filename for artifact in registry["game"].artifacts], [
             "dm-continuity-brief.md", "player-recap.md", "game-summary.md",
         ])
+
+    def test_list_modes_prints_compact_alphabetical_table(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            result = cli.cmd_list_modes(Namespace(), config.AppConfig(Path("/tmp"), 48000))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), """Available recording modes:
+
+MODE     CAPTURE         MICS DESCRIPTION
+cbt      system only     0    Computer-based training as practical reference notes
+game     mic + system    1    Tabletop RPG sessions with DM and player recaps
+journal  mic only        1    Spoken personal reflections as a journal entry
+lecture  system only     0    Lectures or classes as study-ready notes
+meeting  mic + system    1+   General meetings with summaries and action items
+""")
+
+    def test_top_level_help_lists_list_modes(self) -> None:
+        self.assertIn("list-modes", cli.build_parser().format_help())
 
     def test_every_packaged_mode_has_a_substantive_markdown_prompt(self) -> None:
         for name, mode in modes.load_modes().items():

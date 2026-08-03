@@ -27,6 +27,7 @@ class ModeArtifact:
 @dataclass(frozen=True)
 class ModeDefinition:
     name: str
+    description: str
     capture: str
     min_mics: int
     max_mics: int | None
@@ -69,6 +70,9 @@ def load_modes() -> dict[str, ModeDefinition]:
             raise _invalid(f"mode name {name!r} must use lowercase letters, digits, and hyphens")
         if not isinstance(value, dict):
             raise _invalid(f"mode '{name}' must be a mapping")
+        description = value.get("description")
+        if not isinstance(description, str) or not description:
+            raise _invalid(f"mode '{name}' requires a non-empty description")
         capture = value.get("capture")
         if capture not in _CAPTURE_POLICIES:
             raise _invalid(f"mode '{name}' has unsupported capture policy {capture!r}")
@@ -121,8 +125,16 @@ def load_modes() -> dict[str, ModeDefinition]:
                 raise _invalid(
                     f"mode '{name}' combined artifact must reference generated outputs"
                 )
-        modes[name] = ModeDefinition(name, capture, min_mics, max_mics, prompt_file,
-                                     _read_prompt(prompt_file), tuple(artifacts))
+        modes[name] = ModeDefinition(
+            name,
+            description,
+            capture,
+            min_mics,
+            max_mics,
+            prompt_file,
+            _read_prompt(prompt_file),
+            tuple(artifacts),
+        )
     return modes
 
 

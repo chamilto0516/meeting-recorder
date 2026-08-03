@@ -167,10 +167,10 @@ def list_sources() -> list[SourceInfo]:
     return sources
 
 
-def validate_sources(mics: list[str], system_source: str) -> None:
+def validate_sources(mics: list[str], system_source: str | None) -> None:
     """Ensure selected Pulse sources still exist immediately before capture."""
     available = {source.name for source in list_sources()}
-    missing = [source for source in [*mics, system_source] if source not in available]
+    missing = [source for source in [*mics, system_source] if source and source not in available]
     if missing:
         raise RecordingError(
             "Selected audio source(s) are no longer available: "
@@ -197,12 +197,17 @@ def get_default_sink_monitor() -> str:
 
 def _build_ffmpeg_command(
     mics: list[str],
-    system_source: str,
+    system_source: str | None,
     session_dir: Path,
     sample_rate: int,
 ) -> tuple[list[str], dict[str, Path], Path]:
-    labels = [f"mic{i}" for i in range(len(mics))] + ["system"]
-    sources = list(mics) + [system_source]
+    labels = [f"mic{i}" for i in range(len(mics))]
+    sources = list(mics)
+    if system_source:
+        labels.append("system")
+        sources.append(system_source)
+    if not sources:
+        raise RecordingError("At least one microphone or system-audio source is required.")
 
     # ``info`` is intentional: warning-level output does not include the
     # normal shutdown line (including whether FFmpeg received SIGINT), which
@@ -247,7 +252,7 @@ def log_recording_event(log_file: Path, message: str) -> None:
 
 def start_recording(
     mics: list[str],
-    system_source: str,
+    system_source: str | None,
     session_dir: Path,
     sample_rate: int,
 ) -> RecordingHandle:

@@ -121,10 +121,14 @@ meeting-recorder start --system-source alsa_output.usb-Headset.monitor
 meeting-recorder start --name "First: AI Class(Lecture"
 
 # record a lecture/class or CBT with system audio only (no local microphone)
-meeting-recorder start --lecture
+meeting-recorder start --mode lecture
+meeting-recorder start --mode cbt
 
 # record a tabletop-RPG game: one DM mic plus player/system audio
-meeting-recorder start --game --name "The Ruins of Asterfall"
+meeting-recorder start --mode game --name "The Ruins of Asterfall"
+
+# record spoken thoughts from the microphone only
+meeting-recorder start --mode journal --name "Sunday reflection"
 ```
 
 Join your Zoom/Meet/browser call as usual -- capture is independent of which
@@ -165,11 +169,29 @@ finish it with `retry` before starting a new recording.
 
 ### Tabletop-RPG game mode
 
-`--game` records one DM microphone and the player/system-audio track, then
+`--mode game` records one DM microphone and the player/system-audio track, then
 uses the game continuity prompt rather than the meeting-summary prompt. It
 creates `dm-continuity-brief.md`, `player-recap.md`, and an archival combined
 `game-summary.md`. The transcript remains mixed deliberately: the prompt does
 not trust speaker diarization when audio overlaps or a microphone hears output.
+
+### Recording modes
+
+`start --mode MODE` selects a packaged mode and defaults to `meeting`. The
+built-in modes are `meeting` (mic + system audio), `game` (one mic + system
+audio), `lecture` and `cbt` (system audio only), and `journal` (one mic only).
+Their capture rules, output files, and prompt assets are defined in
+`meeting_recorder/modes/modes.yaml`; adding a manifest entry and its `.md`
+prompt makes another mode selectable. `--game` and `--lecture` remain
+deprecated aliases for compatibility.
+
+| Mode | Capture | Output |
+| --- | --- | --- |
+| `meeting` | one or more mics + system | `summary.md` |
+| `game` | one mic + system | DM brief, player recap, and `game-summary.md` |
+| `lecture` | system only | `lecture-notes.md` |
+| `cbt` | system only | `cbt-notes.md` |
+| `journal` | one mic only | `journal.md` |
 
 ### Other commands
 
@@ -191,7 +213,7 @@ mixed.wav         # mic(s) + system mixed down, used for transcription
 ffmpeg.log        # ffmpeg's own log for that session
 capture-validation.json  # per-track WAV format/duration validation report
 transcript.txt    # faster-whisper output
-summary.md        # Markdown LLM summary
+summary.md or mode-specific Markdown outputs
 ```
 
 Override the base directory with `--data-dir` or `MEETING_RECORDER_DATA_DIR`.
@@ -263,6 +285,8 @@ meeting_recorder/
   config.py      layered config (defaults -> file -> env -> CLI)
   audio.py       PipeWire device discovery + FFmpeg recording (start/stop)
   state.py       session persistence between the start and stop invocations
+  modes.py       validated mode registry and packaged prompt loading
+  modes/         modes.yaml plus one prompt asset per recording mode
   transcribe.py  faster-whisper wrapper
   summarize.py   LiteLLM summarization, with map-reduce chunking
   errors.py      shared exception types

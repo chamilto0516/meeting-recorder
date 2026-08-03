@@ -11,32 +11,10 @@ LiteLLM-supported provider later is just a matter of changing `model`,
 from __future__ import annotations
 
 from pathlib import Path
-from dataclasses import dataclass
 
 from meeting_recorder.config import LLMConfig
 from meeting_recorder.errors import SummarizationError
-from meeting_recorder.game_prompt import (
-    GAME_PARTIAL_PROMPT,
-    GAME_REDUCTION_PROMPT,
-    GAME_SYSTEM_PROMPT,
-)
-
-SUMMARY_SYSTEM_PROMPT = (
-    "You are an assistant that writes clear, concise meeting summaries in Markdown from "
-    "raw speech-to-text transcripts. Transcripts may contain minor "
-    "transcription errors, filler words, or missing punctuation -- do your "
-    "best to infer intended meaning. Return Markdown only, using these level-two "
-    "headings: `## Summary`, `## Key discussion points`, `## Decisions`, and "
-    "`## Action items`. Use Markdown bullet lists for the final three sections; "
-    "write `None` beneath a section when there is nothing to report."
-)
-
-PARTIAL_SYSTEM_PROMPT = (
-    "You are an assistant that condenses a portion of a longer meeting "
-    "transcript into a dense, factual summary preserving names, decisions, "
-    "and action items. This summary will later be combined with summaries of "
-    "other portions of the same meeting."
-)
+from meeting_recorder.modes import ModeDefinition
 
 
 def chunk_text(text: str, max_chars: int) -> list[str]:
@@ -141,51 +119,59 @@ def _hierarchical_summary(
     return summaries[0]
 
 
-def summarize_transcript(transcript: str, config: LLMConfig) -> str:
-    """Produce the standard Markdown meeting summary."""
-    condensed = _hierarchical_summary(
-        transcript,
-        config,
-        PARTIAL_SYSTEM_PROMPT,
-        "Combine these meeting notes accurately and compactly, preserving decisions, owners, and action items.",
+def summarize_mode(
+    transcript: str, config: LLMConfig, mode: ModeDefinition
+) -> list[tuple[str, str]]:
+    """Generate every LLM-produced artifact declared by a mode."""
+    partial_prompt = (
+        f"{mode.prompt}\n\n"
+        f"For this partial {mode.name} transcript, extract dense factual notes rather "
+        "than producing the final artifact. "
+        "Preserve important names, facts, decisions, steps, questions, and uncertainty. "
+        "Do not invent facts; these notes will be combined with other portions."
     )
-    return _call_llm(SUMMARY_SYSTEM_PROMPT, condensed, config)
+    reduction_prompt = (
+        f"{mode.prompt}\n\n"
+        f"Combine these partial {mode.name} notes accurately and compactly. Preserve uncertainty "
+        "and important details while removing duplication. Do not invent facts."
+    )
+    condensed = _hierarchical_summary(transcript, config, partial_prompt, reduction_prompt)
+    results: list[tuple[str, str]] = []
+    for artifact in mode.artifacts:
+        if artifact.combine:
+            continue
+        prompt = (
+            f"{mode.prompt}\n\n{artifact.instruction}\n"
+            f"Start exactly with '# {artifact.title}'."
+        )
+        results.append((artifact.filename, _call_llm(prompt, condensed, config)))
+    return results
 
 
-@dataclass(frozen=True)
-class GameSummaries:
-    dm_brief: str
-    player_recap: str
-
-
-def summarize_game(transcript: str, config: LLMConfig) -> GameSummaries:
-    """Generate distinct DM and player documents from a mixed game transcript."""
-    condensed = _hierarchical_summary(
-        transcript, config, GAME_PARTIAL_PROMPT, GAME_REDUCTION_PROMPT
-    )
-    dm_brief = _call_llm(
-        GAME_SYSTEM_PROMPT + "\n\nProduce OUTPUT 1 only. Start exactly with '# DM Continuity Brief'.",
-        condensed,
-        config,
-    )
-    player_recap = _call_llm(
-        GAME_SYSTEM_PROMPT + "\n\nProduce OUTPUT 2 only. Start exactly with '# Player Recap'.",
-        condensed,
-        config,
-    )
-    return GameSummaries(dm_brief=dm_brief, player_recap=player_recap)
+def save_mode_summaries(
+    summaries: list[tuple[str, str]], session_dir: Path, mode: ModeDefinition
+) -> list[Path]:
+    """Write generated artifacts and manifest-declared combined archives."""
+    generated_names = {
+        artifact.filename for artifact in mode.artifacts if not artifact.combine
+    }
+    supplied_names = [filename for filename, _ in summaries]
+    if len(supplied_names) != len(set(supplied_names)) or set(supplied_names) != generated_names:
+        raise SummarizationError(
+            f"Mode '{mode.name}' summary outputs did not match its artifact manifest."
+        )
+    contents = dict(summaries)
+    paths: list[Path] = []
+    for artifact in mode.artifacts:
+        if artifact.combine:
+            body = "\n\n---\n\n".join(contents[name].strip() for name in artifact.combine)
+            combined = f"# {artifact.title}\n\n{body}\n"
+            contents[artifact.filename] = combined
+        paths.append(save_summary(contents[artifact.filename], session_dir, artifact.filename))
+    return paths
 
 
 def save_summary(summary: str, session_dir: Path, filename: str = "summary.md") -> Path:
     path = session_dir / filename
     path.write_text(summary, encoding="utf-8")
     return path
-
-
-def save_game_summaries(summaries: GameSummaries, session_dir: Path) -> tuple[Path, Path, Path]:
-    """Save separate game deliverables plus a combined archival report."""
-    dm_path = save_summary(summaries.dm_brief, session_dir, "dm-continuity-brief.md")
-    player_path = save_summary(summaries.player_recap, session_dir, "player-recap.md")
-    combined = f"{summaries.dm_brief.strip()}\n\n---\n\n{summaries.player_recap.strip()}\n"
-    combined_path = save_summary(combined, session_dir, "game-summary.md")
-    return dm_path, player_path, combined_path

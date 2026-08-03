@@ -1,0 +1,47 @@
+modes:
+  meeting:
+    capture: mic-and-system
+    mics: {min: 1, max: null}
+    prompt: meeting.md
+    artifacts:
+      - filename: summary.md
+        title: Meeting Summary
+        instruction: Summarize the meeting for participants.
+  game:
+    capture: mic-and-system
+    mics: {min: 1, max: 1}
+    prompt: game.md
+    artifacts:
+      - filename: dm-continuity-brief.md
+        title: DM Continuity Brief
+        instruction: Produce the DM-facing continuity brief only.
+      - filename: player-recap.md
+        title: Player Recap
+        instruction: Produce the player-facing recap only.
+      - filename: game-summary.md
+        title: Game Summary Archive
+        combine: [dm-continuity-brief.md, player-recap.md]
+  lecture:
+    capture: system-only
+    mics: {min: 0, max: 0}
+    prompt: lecture.md
+    artifacts:
+      - filename: lecture-notes.md
+        title: Lecture Notes
+        instruction: Produce study-ready lecture notes.
+  cbt:
+    capture: system-only
+    mics: {min: 0, max: 0}
+    prompt: cbt.md
+    artifacts:
+      - filename: cbt-notes.md
+        title: CBT Notes
+        instruction: Produce practical computer-based-training notes.
+  journal:
+    capture: mic-only
+    mics: {min: 1, max: 1}
+    prompt: journal.md
+    artifacts:
+      - filename: journal.md
+        title: Journal Entry
+        instruction: Produce a faithful structured journal entry.

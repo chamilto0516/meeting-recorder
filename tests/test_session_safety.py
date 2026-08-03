@@ -42,14 +42,27 @@ def write_wav(path: Path, sample_rate: int = 48000, frames: int = 32) -> None:
 
 
 class StateSafetyTests(unittest.TestCase):
-    def test_game_mode_is_persisted_and_cli_exposes_the_flag(self) -> None:
+    def test_mode_is_persisted_and_cli_defaults_to_meeting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = make_session(Path(temporary))
             session.mode = "game"
             self.assertEqual(state.Session.from_dict(session.to_dict()).mode, "game")
+        args = cli.build_parser().parse_args(["start"])
+        self.assertEqual(args.mode, "meeting")
+        args = cli.build_parser().parse_args(["start", "--mode", "journal"])
+        self.assertEqual(args.mode, "journal")
         args = cli.build_parser().parse_args(["start", "--game"])
         self.assertTrue(args.game)
         self.assertFalse(args.lecture)
+
+    def test_valid_mode_name_remains_loadable_if_registry_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = make_session(Path(temporary))
+            session.mode = "retired-custom-mode"
+            self.assertEqual(
+                state.Session.from_dict(session.to_dict()).mode,
+                "retired-custom-mode",
+            )
 
     def test_session_name_is_human_readable_and_path_safe(self) -> None:
         self.assertEqual(
@@ -153,8 +166,8 @@ class StateSafetyTests(unittest.TestCase):
                 patch.object(audio, "stop_recording", return_value=True),
                 patch("meeting_recorder.transcribe.transcribe_audio", return_value="transcript"),
                 patch("meeting_recorder.transcribe.save_transcript", return_value=transcript_path),
-                patch("meeting_recorder.summarize.save_summary"),
-                patch("meeting_recorder.summarize.summarize_transcript", return_value="summary") as summarize,
+                patch("meeting_recorder.summarize.save_mode_summaries", return_value=[root / "summary.md"]),
+                patch("meeting_recorder.summarize.summarize_mode", return_value=[("summary.md", "summary")]) as summarize,
             ):
                 self.assertEqual(cli.cmd_stop(args, current), 0)
             self.assertEqual(summarize.call_args.args[1].api_key, "fresh-secret")
@@ -186,10 +199,7 @@ class StateSafetyTests(unittest.TestCase):
                 patch.object(state, "load_session", return_value=session),
                 patch.object(state, "save_session") as save_session,
                 patch.object(state, "clear_session") as clear_session,
-                patch(
-                    "meeting_recorder.summarize.summarize_transcript",
-                    side_effect=SummarizationError("LLM unavailable"),
-                ),
+                patch("meeting_recorder.summarize.summarize_mode", side_effect=SummarizationError("LLM unavailable")),
             ):
                 with self.assertRaisesRegex(SummarizationError, "LLM unavailable"):
                     cli._process_session(session, args, current)

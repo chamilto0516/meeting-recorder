@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from meeting_recorder import audio, config as config_mod, state, summarize, transcribe
+from meeting_recorder import audio, config as config_mod, modes, state, summarize, transcribe
 from meeting_recorder.errors import CaptureValidationError, MeetingRecorderError
 
 logger = logging.getLogger("meeting_recorder")
@@ -82,8 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    start_p = subparsers.add_parser(
-        "start", help="Start a background recording of mic(s) + system audio"
+    start_p = subparsers.add_parser("start", help="Start a background recording")
+    start_p.add_argument(
+        "--mode", default="meeting", metavar="MODE",
+        help="Recording mode (default: meeting; available modes are read from the packaged registry)",
     )
     start_p.add_argument(
         "--mic",
@@ -120,12 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--lecture", "--lecture-mode",
         dest="lecture",
         action="store_true",
-        help="Record only system audio; do not capture any microphone",
+        help="Deprecated alias for '--mode lecture'",
     )
     start_p.add_argument(
         "--game",
         action="store_true",
-        help="Record a tabletop-RPG session: one DM mic plus player system audio",
+        help="Deprecated alias for '--mode game'",
     )
     _add_common_processing_args(start_p)
     start_p.set_defaults(func=cmd_start)
@@ -203,28 +205,47 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
                 )
             return 1
 
-        lecture_mode = getattr(args, "lecture", False)
-        game_mode = getattr(args, "game", False)
-        if lecture_mode and game_mode:
+        legacy_modes = [name for name, selected in (("lecture", args.lecture), ("game", args.game)) if selected]
+        if len(legacy_modes) > 1:
             logger.error("--lecture and --game cannot be combined.")
             return 1
-        if lecture_mode and args.mics:
-            logger.error("--lecture cannot be combined with --mic; lecture mode records system audio only.")
+        if legacy_modes and args.mode != "meeting":
+            logger.error("Deprecated mode flags cannot be combined with --mode.")
             return 1
-        if game_mode and args.mics and len(args.mics) != 1:
-            logger.error("--game supports exactly one DM microphone; pass at most one --mic.")
+        mode_name = legacy_modes[0] if legacy_modes else args.mode
+        if legacy_modes:
+            logger.warning("--%s is deprecated; use '--mode %s'.", mode_name, mode_name)
+        try:
+            mode = modes.get_mode(mode_name)
+        except MeetingRecorderError as exc:
+            logger.error(str(exc))
+            return 1
+        if mode.capture == "system-only" and args.mics:
+            logger.error("--mode %s records system audio only and cannot be combined with --mic.", mode.name)
+            return 1
+        requested_mics = [] if mode.capture == "system-only" else (args.mics or [audio.get_default_source()])
+        if len(requested_mics) < mode.min_mics or (mode.max_mics is not None and len(requested_mics) > mode.max_mics):
+            maximum = str(mode.max_mics) if mode.max_mics is not None else "any number of"
+            logger.error("--mode %s requires %s to %s microphone(s).", mode.name, mode.min_mics, maximum)
             return 1
 
         audio.check_dependencies()
-        mics = [] if lecture_mode else (args.mics or [audio.get_default_source()])
-        system_source = args.system_source or audio.get_default_sink_monitor()
+        mics = requested_mics
+        if mode.capture == "mic-only":
+            if args.system_source:
+                logger.error("--mode %s records microphone audio only and cannot use --system-source.", mode.name)
+                return 1
+            system_source = None
+        else:
+            system_source = args.system_source or audio.get_default_sink_monitor()
         session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if getattr(args, "meeting_name", None):
             session_id += "_" + state.sanitize_session_name(args.meeting_name)
         session_dir = cfg.data_dir / session_id
 
-        logger.info("Mic source(s): %s", ", ".join(mics) if mics else "none (lecture mode)")
-        logger.info("System audio source: %s", system_source)
+        logger.info("Mode: %s", mode.name)
+        logger.info("Mic source(s): %s", ", ".join(mics) if mics else "none")
+        logger.info("System audio source: %s", system_source or "none")
         logger.info("Session directory: %s", session_dir)
         handle = audio.start_recording(mics, system_source, session_dir, cfg.sample_rate)
         session = state.Session(
@@ -240,7 +261,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             sample_rate=cfg.sample_rate,
             log_file=str(handle.log_file),
             meeting_name=getattr(args, "meeting_name", None),
-            mode="game" if game_mode else "meeting",
+            mode=mode.name,
             whisper=cfg.whisper.to_dict(),
             llm=cfg.llm.to_session_dict(),
         )
@@ -381,21 +402,18 @@ def _process_session(args_session: state.Session, args: argparse.Namespace, cfg:
 
     logger.info("Summarizing via LiteLLM (model=%s, endpoint=%s)...", llm_cfg.model, llm_cfg.endpoint)
     try:
-        if session.mode == "game":
-            game_summaries = summarize.summarize_game(transcript, llm_cfg)
-            dm_path, player_path, summary_path = summarize.save_game_summaries(game_summaries, session_dir)
-            logger.info("DM continuity brief saved to %s", dm_path)
-            logger.info("Player recap saved to %s", player_path)
-            summary = game_summaries.dm_brief
-        else:
-            summary = summarize.summarize_transcript(transcript, llm_cfg)
-            summary_path = summarize.save_summary(summary, session_dir)
+        mode = modes.get_mode(session.mode)
+        summaries = summarize.summarize_mode(transcript, llm_cfg, mode)
+        output_paths = summarize.save_mode_summaries(summaries, session_dir, mode)
+        summary_path = output_paths[-1]
+        summary = summaries[0][1]
     except Exception as exc:
         _record_processing_error(session, exc)
         raise
     session.summary_file = str(summary_path)
     session.last_error = None
-    logger.info("Summary saved to %s", summary_path)
+    for output_path in output_paths:
+        logger.info("Mode output saved to %s", output_path)
     print("\n" + summary + "\n")
     with state.session_lock():
         current = state.load_session()
@@ -449,8 +467,8 @@ def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         if session.meeting_name:
             print(f"Name:      {session.meeting_name}")
         print(f"Mode:      {session.mode}")
-        print(f"Mic(s):    {', '.join(session.mics) if session.mics else 'none (lecture mode)'}")
-        print(f"System:    {session.system_source}")
+        print(f"Mic(s):    {', '.join(session.mics) if session.mics else 'none'}")
+        print(f"System:    {session.system_source or 'none'}")
         print(f"Directory: {session.session_dir}")
         return 0 if verified else 1
 

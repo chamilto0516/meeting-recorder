@@ -22,10 +22,10 @@ import unicodedata
 from meeting_recorder.errors import StateError
 
 APP_NAME = "meeting-recorder"
-STATE_VERSION = 4
-SUPPORTED_STATE_VERSIONS = {2, 3, STATE_VERSION}
+STATE_VERSION = 5
+SUPPORTED_STATE_VERSIONS = {2, 3, 4, STATE_VERSION}
 SESSION_STATUSES = {"recording", "recorded", "transcribed", "capture_failed"}
-SESSION_MODES = {"meeting", "game"}
+MODE_NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 
 
 def state_dir() -> Path:
@@ -83,7 +83,7 @@ class Session:
     mixed_file: str
     track_files: dict[str, str]
     mics: list[str]
-    system_source: str
+    system_source: Optional[str]
     sample_rate: int
     log_file: Optional[str] = None
     meeting_name: Optional[str] = None
@@ -127,8 +127,11 @@ class Session:
             raise StateError("Session state contains a credential and was not used.")
         if session.status not in SESSION_STATUSES:
             raise StateError("Session state has an unsupported status and was not used.")
-        if session.mode not in SESSION_MODES:
-            raise StateError("Session state has an unsupported mode and was not used.")
+        # Loading state must not depend on the current registry: a mode could
+        # be renamed after recording, and the user must still be able to stop
+        # and recover that session. Registry lookup happens during processing.
+        if not isinstance(session.mode, str) or not MODE_NAME.fullmatch(session.mode):
+            raise StateError("Session state has an invalid mode name and was not used.")
         if session.status == "recording" and session.process is None:
             raise StateError("Recording session state lacks a process identity and was not used.")
         return session

@@ -282,7 +282,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         return 0
 
 
-def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig, progress_callback=None) -> int:
     with state.session_lock():
         session = state.load_session()
         if session is None:
@@ -330,7 +330,7 @@ def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         _validate_session_capture(session)
         logger.info("Processing is ready to resume with 'meeting-recorder retry'.")
         return 0
-    return _process_session(session, args, cfg)
+    return _process_session(session, args, cfg, progress_callback=progress_callback)
 
 
 def _save_progress(session: state.Session) -> None:
@@ -366,7 +366,12 @@ def _validate_session_capture(session: state.Session) -> None:
     _save_progress(session)
 
 
-def _process_session(args_session: state.Session, args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+def _process_session(
+    args_session: state.Session,
+    args: argparse.Namespace,
+    cfg: config_mod.AppConfig,
+    progress_callback=None,
+) -> int:
     """Resume the first incomplete stage of an already-stopped session."""
     session = args_session
     _validate_session_capture(session)
@@ -386,6 +391,8 @@ def _process_session(args_session: state.Session, args: argparse.Namespace, cfg:
     session_dir = Path(session.session_dir)
 
     if session.status == "recorded":
+        if progress_callback:
+            progress_callback("transcribing", 0)
         logger.info("Transcribing with faster-whisper (model=%s)...", whisper_cfg.model_size)
         try:
             transcript = transcribe.transcribe_audio(mixed_file, whisper_cfg)
@@ -405,6 +412,8 @@ def _process_session(args_session: state.Session, args: argparse.Namespace, cfg:
 
     transcript_path = Path(session.transcript_file or session_dir / "transcript.txt")
     try:
+        if progress_callback and session.status == "transcribed":
+            progress_callback("summarizing", 50)
         transcript = transcript_path.read_text(encoding="utf-8")
     except OSError as exc:
         _record_processing_error(session, exc)
@@ -430,10 +439,12 @@ def _process_session(args_session: state.Session, args: argparse.Namespace, cfg:
         if current is None or current.session_id != session.session_id:
             raise MeetingRecorderError("Saved session changed while processing; refusing to clear it.")
         state.clear_session()
+    if progress_callback:
+        progress_callback("done", 100)
     return 0
 
 
-def cmd_retry(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+def cmd_retry(args: argparse.Namespace, cfg: config_mod.AppConfig, progress_callback=None) -> int:
     with state.session_lock():
         session = state.load_session()
         if session is None:
@@ -448,7 +459,7 @@ def cmd_retry(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
                 session.capture_report or Path(session.session_dir) / "capture-validation.json",
             )
             return 1
-    return _process_session(session, args, cfg)
+    return _process_session(session, args, cfg, progress_callback=progress_callback)
 
 
 def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:

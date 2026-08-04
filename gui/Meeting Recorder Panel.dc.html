@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-41fb8009-9008-4303-99a5-d858ec0ae3a8/styles.css">
+<script src="_ds/industry-41fb8009-9008-4303-99a5-d858ec0ae3a8/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#c9cbcd;display:flex;justify-content:center;align-items:flex-start;padding:70px 20px;font-family:var(--font-body)}
+a{color:var(--color-accent-700)}
+a:hover{color:var(--color-accent-900)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--color-divider)}
+.row:last-child{border-bottom:none}
+</style>
+</helmet>
+
+<div style="width:340px">
+  <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--color-neutral-900);border-radius:var(--radius-sm) var(--radius-sm) 0 0">
+    <span class="{{ trayPulseClass }}" style="width:8px;height:8px;border-radius:50%;background:{{ trayDotColor }};flex:none"></span>
+    <span style="color:var(--color-bg);font-family:var(--font-heading);font-size:13px;letter-spacing:.04em">MEETING RECORDER</span>
+    <span style="margin-left:auto;color:var(--color-neutral-400);font-size:11px">{{ trayStatusLabel }}</span>
+  </div>
+
+  <div class="blueprint" style="background:var(--color-bg);padding:16px 16px 18px;display:flex;flex-direction:column;gap:14px">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+    <div class="seg" style="width:100%">
+      <label class="seg-opt" style="flex:1;justify-content:center">
+        <input type="radio" checked="{{ tabIsRecord }}" onChange="{{ goRecordTab }}"/>Record
+      </label>
+      <label class="seg-opt" style="flex:1;justify-content:center">
+        <input type="radio" checked="{{ tabIsHistory }}" onChange="{{ goHistoryTab }}"/>History
+      </label>
+    </div>
+
+    <sc-if value="{{ tabIsRecord }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;gap:12px">
+
+        <sc-if value="{{ phaseIdle }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="field">
+              <label>Microphone</label>
+              <select class="input" value="{{ mic1 }}" onChange="{{ setMic1 }}">
+                <option value="default">Default (USB Yeti)</option>
+                <option value="analog">Built-in analog stereo</option>
+              </select>
+            </div>
+
+            <sc-if value="{{ secondMicOn }}" hint-placeholder-val="{{ false }}">
+              <div class="field">
+                <label>Second microphone</label>
+                <div style="display:flex;gap:6px">
+                  <select class="input" value="{{ mic2 }}" onChange="{{ setMic2 }}" style="flex:1">
+                    <option value="analog">Built-in analog stereo</option>
+                    <option value="default">Default (USB Yeti)</option>
+                  </select>
+                  <button class="btn btn-secondary btn-icon" onClick="{{ removeSecondMic }}" title="Remove second mic">×</button>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ secondMicOffShown }}" hint-placeholder-val="{{ true }}">
+              <button class="btn btn-ghost" style="align-self:flex-start;padding-left:0" onClick="{{ addSecondMic }}">+ add a second mic</button>
+            </sc-if>
+
+            <div class="field">
+              <label>System audio source</label>
+              <select class="input" value="{{ sysSource }}" onChange="{{ setSysSource }}">
+                <option value="default">Default output monitor</option>
+                <option value="headset">Headset monitor</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Mode</label>
+              <div class="seg" style="width:100%">
+                <sc-for list="{{ modes }}" as="m" hint-placeholder-count="5">
+                  <label class="seg-opt" style="flex:1;justify-content:center;padding:7px 4px">
+                    <input type="radio" checked="{{ m.checked }}" onChange="{{ m.onSelect }}"/>{{ m.label }}
+                  </label>
+                </sc-for>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Session name (optional)</label>
+              <input class="input" type="text" placeholder="e.g. Weekly sync" value="{{ sessionName }}" onChange="{{ setSessionName }}"/>
+            </div>
+
+            <button class="btn btn-primary btn-block" onClick="{{ startRecording }}">▶ Start Recording</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ phaseRecording }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:16px;border:1px solid var(--color-accent);background:var(--color-accent-100)">
+              <span class="pulse" style="width:10px;height:10px;border-radius:50%;background:var(--color-accent-700)"></span>
+              <span style="font-family:var(--font-heading);font-size:28px;color:var(--color-accent-900)">{{ elapsedStr }}</span>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
+              <span class="tag tag-outline">{{ currentModeLabel }}</span>
+              <span class="tag tag-neutral">{{ micSummary }}</span>
+            </div>
+            <button class="btn btn-primary btn-block" onClick="{{ stopRecording }}">■ Stop Recording</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ phaseProcessing }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="font-family:var(--font-heading);font-size:15px">{{ stageLabel }}</div>
+            <div style="height:10px;border:1px solid var(--color-divider);background:var(--color-surface)">
+              <div style="height:100%;background:var(--color-accent);width:{{ progressPct }}%"></div>
+            </div>
+            <div class="text-muted" style="font-size:12px">This can take a minute — Whisper runs locally, the summary goes out to the configured LLM.</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ phaseDone }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div class="tag tag-accent" style="align-self:flex-start">Done</div>
+            <div style="font-size:13px" class="text-muted">{{ sessionName }} — {{ currentModeLabel }} — {{ elapsedStr }}</div>
+            <a href="#" onClick="{{ openFolder }}" class="btn btn-secondary btn-block">Open Output Folder ↗</a>
+            <button class="btn btn-primary btn-block" onClick="{{ newRecording }}">Start Another</button>
+          </div>
+        </sc-if>
+
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ tabIsHistory }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column">
+        <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="5">
+          <div class="row">
+            <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+              <span style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.name }}</span>
+              <span style="display:flex;gap:5px;align-items:center">
+                <span class="tag tag-outline">{{ s.mode }}</span>
+                <span class="text-muted" style="font-size:11px">{{ s.time }}</span>
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex:none">
+              <sc-if value="{{ s.failed }}" hint-placeholder-val="{{ false }}">
+                <button class="btn btn-ghost" style="font-size:12px;padding:2px 4px" onClick="{{ s.retry }}">Retry</button>
+              </sc-if>
+              <span class="tag {{ s.statusTagClass }}">{{ s.statusLabel }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    tab: 'record',
+    phase: 'idle',
+    mic1: 'default',
+    mic2: 'analog',
+    secondMicOn: false,
+    sysSource: 'default',
+    mode: 'meeting',
+    sessionName: '',
+    elapsed: 0,
+    progress: 0,
+  };
+
+  MODES = [
+    { id: 'meeting', label: 'Meeting' },
+    { id: 'game', label: 'Game' },
+    { id: 'lecture', label: 'Lecture' },
+    { id: 'cbt', label: 'CBT' },
+    { id: 'journal', label: 'Journal' },
+  ];
+
+  SESSIONS = [
+    { name: 'Weekly Sync', mode: 'meeting', time: '2:14 PM', failed: false },
+    { name: 'AI Class Lecture 4', mode: 'lecture', time: '10:02 AM', failed: true },
+    { name: 'Ruins of Asterfall', mode: 'game', time: 'Yesterday', failed: false },
+    { name: 'Sunday Reflection', mode: 'journal', time: 'Sunday', failed: false },
+    { name: 'CBT Check-in', mode: 'cbt', time: 'Friday', failed: false },
+  ];
+
+  componentWillUnmount() {
+    clearInterval(this._recTimer);
+    clearInterval(this._procTimer);
+  }
+
+  startRecording = () => {
+    this.setState({ phase: 'recording', elapsed: 0 });
+    clearInterval(this._recTimer);
+    this._recTimer = setInterval(() => this.setState(s => ({ elapsed: s.elapsed + 1 })), 1000);
+  };
+
+  stopRecording = () => {
+    clearInterval(this._recTimer);
+    this.setState({ phase: 'processing', progress: 0 });
+    clearInterval(this._procTimer);
+    this._procTimer = setInterval(() => {
+      this.setState(s => {
+        const next = Math.min(100, s.progress + 4);
+        if (next >= 100) clearInterval(this._procTimer);
+        return { progress: next, phase: next >= 100 ? 'done' : 'processing' };
+      });
+    }, 150);
+  };
+
+  newRecording = () => this.setState({ phase: 'idle', elapsed: 0, progress: 0 });
+  openFolder = (e) => { e.preventDefault(); };
+
+  fmtTime(sec) {
+    const m = Math.floor(sec / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  renderVals() {
+    const st = this.state;
+    const currentMode = this.MODES.find(m => m.id === st.mode) || this.MODES[0];
+    const micSummary = st.secondMicOn
+      ? (st.mic1 === 'default' ? 'USB Yeti + analog' : 'analog + USB Yeti')
+      : (st.mic1 === 'default' ? 'USB Yeti' : 'Built-in analog');
+
+    return {
+      tabIsRecord: st.tab === 'record',
+      tabIsHistory: st.tab === 'history',
+      goRecordTab: () => this.setState({ tab: 'record' }),
+      goHistoryTab: () => this.setState({ tab: 'history' }),
+
+      phaseIdle: st.phase === 'idle',
+      phaseRecording: st.phase === 'recording',
+      phaseProcessing: st.phase === 'processing',
+      phaseDone: st.phase === 'done',
+
+      mic1: st.mic1,
+      setMic1: (e) => this.setState({ mic1: e.target.value }),
+      mic2: st.mic2,
+      setMic2: (e) => this.setState({ mic2: e.target.value }),
+      secondMicOn: st.secondMicOn,
+      secondMicOffShown: !st.secondMicOn,
+      addSecondMic: () => this.setState({ secondMicOn: true }),
+      removeSecondMic: () => this.setState({ secondMicOn: false }),
+
+      sysSource: st.sysSource,
+      setSysSource: (e) => this.setState({ sysSource: e.target.value }),
+
+      modes: this.MODES.map(m => ({
+        label: m.label,
+        checked: st.mode === m.id,
+        onSelect: () => this.setState({ mode: m.id }),
+      })),
+      currentModeLabel: currentMode.label,
+
+      sessionName: st.sessionName,
+      setSessionName: (e) => this.setState({ sessionName: e.target.value }),
+
+      startRecording: this.startRecording,
+      stopRecording: this.stopRecording,
+      newRecording: this.newRecording,
+      openFolder: this.openFolder,
+
+      elapsedStr: this.fmtTime(st.elapsed),
+      micSummary,
+
+      stageLabel: st.progress < 50 ? 'Transcribing…' : 'Summarizing…',
+      progressPct: st.progress,
+
+      trayDotColor: st.phase === 'idle' ? 'var(--color-neutral-400)' : 'var(--color-accent-500)',
+      trayPulseClass: (st.phase === 'recording' || st.phase === 'processing') ? 'pulse' : '',
+      trayStatusLabel: { idle: 'Ready', recording: 'Recording', processing: 'Processing', done: 'Done' }[st.phase],
+
+      sessions: this.SESSIONS.map(s => ({
+        name: s.name,
+        mode: s.mode,
+        time: s.time,
+        failed: s.failed,
+        statusLabel: s.failed ? 'Failed' : 'Done',
+        statusTagClass: s.failed ? 'tag-outline' : 'tag-accent',
+        retry: () => {},
+      })),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

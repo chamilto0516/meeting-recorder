@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Meeting Recorder Panel
+Comment=Control local meeting recording from the system tray
+Exec=meeting-recorder-panel
+Icon=audio-input-microphone-symbolic
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupNotify=true

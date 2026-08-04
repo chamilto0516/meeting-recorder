@@ -17,9 +17,14 @@ dependencies = [
 
 [project.scripts]
 meeting-recorder = "meeting_recorder.cli:main"
+meeting-recorder-panel = "meeting_recorder_panel.app:main"
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
 
 [tool.setuptools.packages.find]
-include = ["meeting_recorder*"]
+where = [".", "gui"]
+include = ["meeting_recorder*", "meeting_recorder_panel*"]
 
 [tool.setuptools.package-data]
 meeting_recorder = ["modes/*.md", "modes/*.yaml"]

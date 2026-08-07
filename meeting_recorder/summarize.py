@@ -11,7 +11,9 @@ LiteLLM-supported provider later is just a matter of changing `model`,
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from meeting_recorder.config import LLMConfig
 from meeting_recorder.errors import SummarizationError
@@ -19,6 +21,60 @@ from meeting_recorder.modes import ModeDefinition
 
 
 _H1_HEADING = re.compile(r"(?m)^# ([^\n]+?)\s*$")
+_MISSING = object()
+
+
+def _response_value(value: Any, key: str, default: Any = _MISSING) -> Any:
+    """Read a field from either a provider dict or SDK response object."""
+    if isinstance(value, Mapping):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _extract_response_text(response: Any) -> str:
+    """Return visible assistant text from Chat Completions or Responses output.
+
+    LiteLLM normally maps Responses API results back to Chat Completions. Some
+    proxy/provider combinations can instead expose the raw Responses shape, so
+    accept both without ever treating reasoning as visible answer text.
+    """
+    choices = _response_value(response, "choices")
+    if choices is not _MISSING:
+        if not isinstance(choices, (list, tuple)) or not choices:
+            raise ValueError("LLM response contained no chat-completion choices")
+        message = _response_value(choices[0], "message")
+        content = _response_value(message, "content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("LLM chat-completion response contained no assistant text")
+        return content.strip()
+
+    output = _response_value(response, "output")
+    if output is _MISSING:
+        raise ValueError("LLM response had neither chat-completion choices nor Responses output")
+    if not isinstance(output, (list, tuple)):
+        raise ValueError("LLM Responses output was not a list")
+
+    text_parts: list[str] = []
+    for item in output:
+        if (
+            _response_value(item, "type") != "message"
+            or _response_value(item, "role") != "assistant"
+        ):
+            continue
+        content = _response_value(item, "content")
+        if not isinstance(content, (list, tuple)):
+            continue
+        for part in content:
+            if _response_value(part, "type") != "output_text":
+                continue
+            text = _response_value(part, "text")
+            if isinstance(text, str):
+                text_parts.append(text)
+
+    text = "".join(text_parts).strip()
+    if not text:
+        raise ValueError("LLM Responses response contained no assistant output text")
+    return text
 
 
 def _is_context_limit_error(exc: Exception) -> bool:
@@ -54,7 +110,7 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
                 {"role": "user", "content": user_prompt},
             ],
         )
-        return response["choices"][0]["message"]["content"].strip()
+        return _extract_response_text(response)
     except Exception as exc:  # noqa: BLE001 - surface as our own error type
         if _is_context_limit_error(exc):
             raise SummarizationError(

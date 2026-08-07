@@ -125,6 +125,45 @@ class SummaryOutputTests(unittest.TestCase):
             ):
                 summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
 
+    def test_call_llm_extracts_chat_completion_content(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "choices": [{"message": {"content": "  # Meeting Summary\n\nDone.  "}}]
+        })
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            result = summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
+        self.assertEqual(result, "# Meeting Summary\n\nDone.")
+
+    def test_call_llm_extracts_responses_api_output_without_reasoning(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "object": "response",
+            "output": [
+                {"type": "reasoning", "summary": [{"text": "Do not return this."}]},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "  # Meeting Summary\n\n"},
+                        {"type": "output_text", "text": "Visible text.  "},
+                    ],
+                },
+            ],
+        })
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            result = summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
+        self.assertEqual(result, "# Meeting Summary\n\nVisible text.")
+
+    def test_call_llm_rejects_reasoning_only_response(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "object": "response",
+            "output": [{"type": "reasoning", "summary": [{"text": "Internal work."}]}],
+        })
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            with self.assertRaisesRegex(SummarizationError, "no assistant output text"):
+                summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
+
     def test_legacy_chunk_limit_is_ignored_and_not_persisted(self) -> None:
         cfg = config.LLMConfig.from_dict({
             "model": "remote/model",

@@ -58,7 +58,8 @@ meeting  mic + system    1+   General meetings with summaries and action items
         mode = modes.get_mode("game")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with patch.object(summarize, "_call_llm", side_effect=["# DM Continuity Brief", "# Player Recap"]):
+            response = "# DM Continuity Brief\n\nNotes\n\n# Player Recap\n\nRecap"
+            with patch.object(summarize, "_call_llm", return_value=response):
                 summaries = summarize.summarize_mode("The party arrives.", config.LLMConfig(), mode)
             paths = summarize.save_mode_summaries(summaries, root, mode)
             self.assertEqual([path.name for path in paths], [

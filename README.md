@@ -262,7 +262,6 @@ llm:
   model: ollama/llama3.1          # LiteLLM model string
   endpoint: http://localhost:11434
   api_key: null
-  chunk_char_limit: 6000
 ```
 
 * **Local Ollama (default)**: `model: ollama/<name>`, `endpoint:
@@ -272,10 +271,12 @@ llm:
   `model` to whatever LiteLLM expects for that provider (e.g.
   `openai/gpt-4o-mini`, `litellm_proxy/my-model`), point `endpoint` at that
   server, and set `api_key`. No code changes needed.
-* Long transcripts are automatically map-reduced: if the transcript exceeds
-  `chunk_char_limit` characters, it's split into chunks, each summarized
-  individually, and the partial summaries are combined into one final
-  summary call.
+* Summarization sends the complete transcript and mode prompt in one LLM call.
+  Configure a model whose context window is large enough for the full transcript,
+  prompt, and response. The recorder fails clearly and remains retryable if the
+  model rejects the input; it does not fall back to lossy partial summaries.
+* Modes with multiple generated documents, such as `game`, request all documents
+  in that one response and split them at their exact Markdown headings.
 
 ## Project layout
 
@@ -288,7 +289,7 @@ meeting_recorder/
   modes.py       validated mode registry and packaged prompt loading
   modes/         modes.yaml plus one prompt asset per recording mode
   transcribe.py  faster-whisper wrapper
-  summarize.py   LiteLLM summarization, with map-reduce chunking
+  summarize.py   Full-context LiteLLM summarization and artifact parsing
   errors.py      shared exception types
 ```
 
@@ -313,3 +314,6 @@ meeting_recorder/
 * **Ollama connection errors during `stop`** -- make sure `ollama serve` is
   running and the model in your config has been pulled
   (`ollama pull llama3.1`).
+* **The model could not accept the complete transcript** -- configure a model
+  with a larger context window, then run `meeting-recorder retry`. The saved
+  transcript is reused without repeating transcription.

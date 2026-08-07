@@ -38,6 +38,3 @@ llm:
   endpoint: http://localhost:11434
   # API key, if your endpoint requires one. Local Ollama does not.
   api_key: null
-  # Character budget per chunk before the transcript is map-reduced into
-  # multiple summarization calls. Lower this for small-context models.
-  chunk_char_limit: 6000

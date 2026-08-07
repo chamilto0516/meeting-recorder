@@ -317,3 +317,16 @@ meeting_recorder/
 * **The model could not accept the complete transcript** -- configure a model
   with a larger context window, then run `meeting-recorder retry`. The saved
   transcript is reused without repeating transcription.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Privacy
+
+Meeting Recorder processes audio and transcripts according to the configured
+transcription and LLM providers. Depending on your configuration, transcript
+content may be sent to third-party AI services.
+
+Users are responsible for complying with applicable recording-consent and
+privacy laws when recording conversations.

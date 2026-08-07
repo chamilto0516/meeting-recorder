@@ -10,6 +10,7 @@ LiteLLM-supported provider later is just a matter of changing `model`,
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from meeting_recorder.config import LLMConfig
@@ -17,28 +18,22 @@ from meeting_recorder.errors import SummarizationError
 from meeting_recorder.modes import ModeDefinition
 
 
-def chunk_text(text: str, max_chars: int) -> list[str]:
-    """Split `text` into whitespace-respecting chunks, each at most
-    `max_chars` characters (best-effort, on word boundaries)."""
-    words = text.split()
-    if not words:
-        return [""]
+_H1_HEADING = re.compile(r"(?m)^# ([^\n]+?)\s*$")
 
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for word in words:
-        added_len = len(word) + (1 if current else 0)
-        if current and current_len + added_len > max_chars:
-            chunks.append(" ".join(current))
-            current = [word]
-            current_len = len(word)
-        else:
-            current.append(word)
-            current_len += added_len
-    if current:
-        chunks.append(" ".join(current))
-    return chunks
+
+def _is_context_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "context length",
+            "context window",
+            "maximum context",
+            "prompt is too long",
+            "too many tokens",
+            "token limit",
+        )
+    )
 
 
 def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
@@ -61,91 +56,67 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
         )
         return response["choices"][0]["message"]["content"].strip()
     except Exception as exc:  # noqa: BLE001 - surface as our own error type
+        if _is_context_limit_error(exc):
+            raise SummarizationError(
+                f"The configured model could not accept the complete transcript "
+                f"(model={config.model!r}, endpoint={config.endpoint!r}). Choose a "
+                "model whose context window can hold the full transcript and mode "
+                f"prompt. Provider error: {exc}"
+            ) from exc
         raise SummarizationError(
             f"LiteLLM summarization call failed (model={config.model!r}, "
             f"endpoint={config.endpoint!r}): {exc}"
         ) from exc
 
 
-def _group_texts(texts: list[str], max_chars: int) -> list[str]:
-    groups: list[str] = []
-    current: list[str] = []
-    current_length = 0
-    for text in texts:
-        added = len(text) + (2 if current else 0)
-        if current and current_length + added > max_chars:
-            groups.append("\n\n".join(current))
-            current = [text]
-            current_length = len(text)
-        else:
-            current.append(text)
-            current_length += added
-    if current:
-        groups.append("\n\n".join(current))
-    return groups
+def _artifact_prompt(mode: ModeDefinition) -> str:
+    generated = [artifact for artifact in mode.artifacts if not artifact.combine]
+    requirements = "\n".join(
+        f"{index}. Start exactly with '# {artifact.title}'. {artifact.instruction}"
+        for index, artifact in enumerate(generated, start=1)
+    )
+    return (
+        f"{mode.prompt}\n\n"
+        "The user message is the complete transcript. Read it from beginning to "
+        "end and produce every requested artifact from that full context.\n\n"
+        f"Requested artifacts, in required order:\n{requirements}\n\n"
+        "Return all requested artifacts in one Markdown response. Use each exact "
+        "level-one heading once, in the order listed. Do not add any other "
+        "level-one headings, preamble, epilogue, or Markdown code fence."
+    )
 
 
-def _hierarchical_summary(
-    transcript: str,
-    config: LLMConfig,
-    partial_prompt: str,
-    reduction_prompt: str,
-) -> str:
-    """Map-reduce while keeping every individual LLM input bounded in size."""
-    transcript = transcript.strip()
-    if not transcript:
-        raise SummarizationError("Transcript is empty; nothing to summarize.")
-    chunks = chunk_text(transcript, config.chunk_char_limit)
-    if len(chunks) == 1:
-        return chunks[0]
-    summaries = [
-        _call_llm(
-            partial_prompt,
-            f"Transcript part {i + 1} of {len(chunks)}:\n\n{chunk}",
-            config,
+def _parse_artifacts(response: str, mode: ModeDefinition) -> list[tuple[str, str]]:
+    generated = [artifact for artifact in mode.artifacts if not artifact.combine]
+    expected_titles = [artifact.title for artifact in generated]
+    response = response.strip()
+    headings = list(_H1_HEADING.finditer(response))
+    actual_titles = [match.group(1).strip() for match in headings]
+
+    if actual_titles != expected_titles or (headings and headings[0].start() != 0):
+        expected = ", ".join(f"# {title}" for title in expected_titles)
+        actual = ", ".join(f"# {title}" for title in actual_titles) or "none"
+        raise SummarizationError(
+            f"Mode '{mode.name}' returned invalid artifact headings. Expected "
+            f"exactly, in order: {expected}. Received: {actual}."
         )
-        for i, chunk in enumerate(chunks)
-    ]
-    while len(summaries) > 1:
-        groups = _group_texts(summaries, config.chunk_char_limit)
-        if len(groups) == len(summaries):
-            # A single model response can exceed our preferred bound. It is
-            # still safer to reduce it than to send every prior result at once.
-            groups = ["\n\n".join(summaries)]
-        summaries = [
-            _call_llm(reduction_prompt, group, config)
-            for group in groups
-        ]
-    return summaries[0]
+
+    results: list[tuple[str, str]] = []
+    for index, (artifact, heading) in enumerate(zip(generated, headings)):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(response)
+        content = response[heading.start():end].strip()
+        results.append((artifact.filename, content))
+    return results
 
 
 def summarize_mode(
     transcript: str, config: LLMConfig, mode: ModeDefinition
 ) -> list[tuple[str, str]]:
-    """Generate every LLM-produced artifact declared by a mode."""
-    partial_prompt = (
-        f"{mode.prompt}\n\n"
-        f"For this partial {mode.name} transcript, extract dense factual notes rather "
-        "than producing the final artifact. "
-        "Preserve important names, facts, decisions, steps, questions, and uncertainty. "
-        "Do not invent facts; these notes will be combined with other portions."
-    )
-    reduction_prompt = (
-        f"{mode.prompt}\n\n"
-        f"Combine these partial {mode.name} notes accurately and compactly. Preserve uncertainty "
-        "and important details while removing duplication. Do not invent facts."
-    )
-    condensed = _hierarchical_summary(transcript, config, partial_prompt, reduction_prompt)
-    results: list[tuple[str, str]] = []
-    for artifact in mode.artifacts:
-        if artifact.combine:
-            continue
-        prompt = (
-            f"{mode.prompt}\n\n{artifact.instruction}\n"
-            f"Start exactly with '# {artifact.title}'."
-        )
-        results.append((artifact.filename, _call_llm(prompt, condensed, config)))
-    return results
+    """Generate every declared artifact from one full-context LLM call."""
+    if not transcript.strip():
+        raise SummarizationError("Transcript is empty; nothing to summarize.")
+    response = _call_llm(_artifact_prompt(mode), transcript, config)
+    return _parse_artifacts(response, mode)
 
 
 def save_mode_summaries(

@@ -36,7 +36,6 @@ DEFAULTS: dict[str, Any] = {
         "model": "ollama/llama3.1",
         "endpoint": "http://localhost:11434",
         "api_key": None,
-        "chunk_char_limit": 6000,
     },
 }
 
@@ -66,14 +65,12 @@ class LLMConfig:
     model: str = "ollama/llama3.1"
     endpoint: str = "http://localhost:11434"
     api_key: Optional[str] = None
-    chunk_char_limit: int = 6000
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
             "endpoint": self.endpoint,
             "api_key": self.api_key,
-            "chunk_char_limit": self.chunk_char_limit,
         }
 
     def to_session_dict(self) -> dict[str, Any]:

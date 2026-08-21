@@ -11,3 +11,6 @@ dist/
 sessions/
 *.wav
 *.log
+
+# Local machine configuration (may contain endpoint credentials)
+2028-08-18-config.yaml

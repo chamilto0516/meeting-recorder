@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from meeting_recorder import audio, config as config_mod, modes, state, summarize, transcribe
-from meeting_recorder.errors import CaptureValidationError, MeetingRecorderError
+from meeting_recorder import audio, config as config_mod, device_selection, modes, state, summarize, transcribe
+from meeting_recorder.errors import CaptureValidationError, ConfigError, MeetingRecorderError
 
 logger = logging.getLogger("meeting_recorder")
 
@@ -79,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Base directory for session recordings/transcripts/summaries",
     )
     parser.add_argument(
+        "--device-config",
+        type=Path,
+        help="Path to the device-alias YAML file (default: ~/.config/meeting-recorder/devices.yaml)",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging"
     )
 
@@ -93,15 +99,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recording mode (default: meeting; available modes are read from the packaged registry)",
     )
     start_p.add_argument(
+        "--allow-llm-device-selection",
+        action="store_true",
+        help="Allow the configured LLM to resolve an otherwise unmatched mic/output hint; sends only device names.",
+    )
+    start_p.add_argument(
         "--mic",
         action="append",
         dest="mics",
         metavar="SOURCE",
         help=(
-            "PipeWire/Pulse source name for a microphone. Repeat to record "
-            "multiple mics (e.g. --mic alsa_input.usb-... --mic alsa_input.pci-...). "
-            "Defaults to the system default input source. Run "
-            "'meeting-recorder list-devices' to see available names."
+            "Microphone source selector: m1/m2, alias, close match, or exact "
+            "PipeWire/Pulse name. Repeat to record multiple mics. Defaults to "
+            "the system default input source; run 'meeting-recorder list-devices'."
         ),
     )
     start_p.add_argument(
@@ -109,8 +119,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="system_source",
         metavar="SOURCE",
         help=(
-            "PipeWire/Pulse monitor source to capture system audio (browser tabs, "
-            "Zoom, Google Meet, etc). Defaults to the default sink's monitor, i.e. "
+            "Output-monitor selector: o1/o2, alias, close match, or exact "
+            "PipeWire/Pulse name. Defaults to the default sink's monitor, i.e. "
             "'whatever is currently playing out loud'."
         ),
     )
@@ -171,6 +181,18 @@ def build_parser() -> argparse.ArgumentParser:
         "list-devices", help="List available PipeWire/Pulse audio sources"
     )
     list_p.set_defaults(func=cmd_list_devices)
+
+    devices_p = subparsers.add_parser(
+        "devices", help="Manage the user-editable device alias file"
+    )
+    devices_subparsers = devices_p.add_subparsers(dest="devices_command", required=True)
+    init_p = devices_subparsers.add_parser(
+        "init", help="Create an editable alias file from currently connected devices"
+    )
+    init_p.add_argument(
+        "--force", action="store_true", help="Replace an existing device alias file"
+    )
+    init_p.set_defaults(func=cmd_devices_init)
 
     modes_p = subparsers.add_parser(
         "list-modes", help="List available recording modes"
@@ -240,14 +262,25 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             return 1
 
         audio.check_dependencies()
-        mics = requested_mics
+        candidates = device_selection.discover(cfg.device_aliases)
+        mics = [
+            device_selection.resolve(
+                selector, "mic", candidates, cfg.device_aliases,
+                allow_llm=getattr(args, "allow_llm_device_selection", False), llm=cfg.llm,
+            ).source
+            for selector in requested_mics
+        ]
         if mode.capture == "mic-only":
             if args.system_source:
                 logger.error("--mode %s records microphone audio only and cannot use --system-source.", mode.name)
                 return 1
             system_source = None
         else:
-            system_source = args.system_source or audio.get_default_sink_monitor()
+            requested_system = args.system_source or audio.get_default_sink_monitor()
+            system_source = device_selection.resolve(
+                requested_system, "output", candidates, cfg.device_aliases,
+                allow_llm=getattr(args, "allow_llm_device_selection", False), llm=cfg.llm,
+            ).source
         session_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if getattr(args, "meeting_name", None):
             session_id += "_" + state.sanitize_session_name(args.meeting_name)
@@ -495,29 +528,50 @@ def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
 
 
 def cmd_list_devices(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
-    audio.check_dependencies()
-    sources = audio.list_sources()
-    default_source = audio.get_default_source()
-    default_monitor = audio.get_default_sink_monitor()
+    candidates = device_selection.discover(cfg.device_aliases)
 
-    print("Microphones / input sources:")
-    for src in sources:
-        if src.is_monitor:
-            continue
-        marker = " (default)" if src.name == default_source else ""
-        print(f"  [{src.index}] {src.name}{marker}")
+    def show(kind: str, title: str) -> None:
+        print(title)
+        for candidate in candidates:
+            if candidate.kind != kind:
+                continue
+            marker = " (default)" if candidate.is_default else ""
+            aliases = f"; aliases: {', '.join(candidate.aliases)}" if candidate.aliases else ""
+            print(f"  [{candidate.token}] {candidate.label}{marker}{aliases}")
+            print(f"       {candidate.source}")
 
-    print("\nSystem audio (sink monitors -- captures whatever is playing):")
-    for src in sources:
-        if not src.is_monitor:
-            continue
-        marker = " (default sink's monitor)" if src.name == default_monitor else ""
-        print(f"  [{src.index}] {src.name}{marker}")
-
+    show("mic", "Microphones / input sources:")
+    print()
+    show("output", "System audio (sink monitors -- captures whatever is playing):")
+    available = {candidate.source for candidate in candidates}
+    unavailable = [(alias, source) for alias, source in cfg.device_aliases.items() if source not in available]
+    if unavailable:
+        print("\nSaved aliases not currently available:")
+        for alias, source in unavailable:
+            print(f"  {alias}: {source}")
     print(
-        "\nUse '--mic <name>' (repeatable) and '--system-source <name>' with "
-        "'meeting-recorder start' to override the defaults."
+        "\nUse '--mic m1' (repeatable) and '--system-source o1' with "
+        "'meeting-recorder start'. Exact source IDs and aliases remain supported."
     )
+    return 0
+
+
+def cmd_devices_init(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+    """Create the separate alias file without changing primary application config."""
+    path = cfg.device_config
+    if path is None:  # Defensive: AppConfig always supplies a resolved default.
+        raise ConfigError("No device config path was resolved.")
+    if path.exists() and not args.force:
+        logger.error("Device config already exists: %s. Re-run with --force to replace it.", path)
+        return 1
+    candidates = device_selection.discover({})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(device_selection.render_device_config(candidates), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+    print(f"Created device alias config: {path}")
+    print("Edit the alias names, then run 'meeting-recorder list-devices' to verify them.")
     return 0
 
 

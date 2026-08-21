@@ -97,11 +97,14 @@ meeting-recorder list-devices
 
 ```
 Microphones / input sources:
-  [0] alsa_input.usb-Blue_Microphones_Yeti-00 (default)
-  [1] alsa_input.pci-0000_00_1f.3.analog-stereo
+  [m1] usb Blue Microphones Yeti 00 (default)
+       alsa_input.usb-Blue_Microphones_Yeti-00
+  [m2] pci 0000 00 1f 3 analog stereo
+       alsa_input.pci-0000_00_1f.3.analog-stereo
 
 System audio (sink monitors -- captures whatever is playing):
-  [2] alsa_output.pci-0000_00_1f.3.analog-stereo.monitor (default sink's monitor)
+  [o1] pci 0000 00 1f 3 analog stereo (default)
+       alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
 ```
 
 ### 2. Start recording
@@ -113,6 +116,9 @@ meeting-recorder start
 # multiple mics (e.g. two people, two headsets)
 meeting-recorder start --mic alsa_input.usb-Blue_Microphones_Yeti-00 \
                         --mic alsa_input.usb-Another_Mic-00
+
+# compact selectors from list-devices; m1/o1 are live, current-device numbers
+meeting-recorder start --mic m1 --system-source o1
 
 # pin a specific system audio source instead of the default sink's monitor
 meeting-recorder start --system-source alsa_output.usb-Headset.monitor
@@ -278,6 +284,45 @@ llm:
 * Modes with multiple generated documents, such as `game`, request all documents
   in that one response and split them at their exact Markdown headings.
 
+### Smart device selectors and aliases
+
+`list-devices` gives each currently connected microphone an `mN` selector and
+each output monitor an `oN` selector. The default device of each type is first,
+then the rest are alphabetized. These selectors are intentionally live: use a
+personal alias when a durable name matters.
+
+Create an editable alias file once:
+
+```bash
+meeting-recorder devices init
+# edit ~/.config/meeting-recorder/devices.yaml
+```
+
+```yaml
+version: 1
+aliases:
+  desk-mic: alsa_input.usb-Blue_Microphones_Yeti-00
+  headset-output: alsa_output.usb-Headset-00.analog-stereo.monitor
+```
+
+Then use `--mic desk-mic` or `--system-source headset-output`. Exact PipeWire
+source IDs remain valid, and a unique close match such as `--mic yeti` is also
+resolved locally. An ambiguous name fails with the available choices instead
+of guessing.
+
+For an otherwise unmatched natural-language hint, explicitly permit the
+configured LLM to select from the *live* candidate list:
+
+```bash
+meeting-recorder start --allow-llm-device-selection --mic "the USB headset"
+```
+
+This sends the hint and device names—not audio or transcripts—to the configured
+LLM endpoint. Its response must name one current `mN`/`oN` selector and is
+validated before recording starts. Without the flag, no device-selection LLM
+call is made. Use `--device-config PATH` to use another alias file; `devices
+init` never overwrites an existing one unless given `--force`.
+
 ## Project layout
 
 ```
@@ -285,6 +330,7 @@ meeting_recorder/
   cli.py         argparse entry point (start/stop/status/list-devices)
   config.py      layered config (defaults -> file -> env -> CLI)
   audio.py       PipeWire device discovery + FFmpeg recording (start/stop)
+  device_selection.py  live mN/oN selectors, aliases, local matching, optional LLM validation
   state.py       session persistence between the start and stop invocations
   modes.py       validated mode registry and packaged prompt loading
   modes/         modes.yaml plus one prompt asset per recording mode

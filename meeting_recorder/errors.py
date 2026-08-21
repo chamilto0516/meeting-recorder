@@ -13,6 +13,22 @@ class RecordingError(MeetingRecorderError):
     """Raised when starting/stopping the background recording fails."""
 
 
+class DeviceSelectionError(RecordingError):
+    """Raised when a microphone or system-audio selector cannot be resolved."""
+
+
+class DeviceNotFoundError(DeviceSelectionError):
+    """Raised when a selector has no local device match."""
+
+
+class AmbiguousDeviceSelectionError(DeviceSelectionError):
+    """Raised when a selector matches more than one live device."""
+
+
+class ConfigError(MeetingRecorderError):
+    """Raised when user-owned recorder configuration is invalid."""
+
+
 class CaptureValidationError(RecordingError):
     """Raised when recorded audio tracks are missing, corrupt, or inconsistent."""
 

@@ -3,7 +3,7 @@
 ## Next
 
 - [ ] Bluetooth echo: Investigate mic/speaker acoustic echo and cross-talk; determine whether PipeWire echo cancellation, source selection, or post-processing can improve transcripts when the mic hears meeting audio from the speakers.
-- [ ] Smart mic selection: Make `--mic` accept a close-match search or interactive selection instead of requiring a full PipeWire source name.
+- [x] Smart mic and output selection: `--mic`/`--system-source` accept live short selectors, aliases, and safe close matches; optional LLM help is explicit and validated.
 - [ ] Session cleanup command: Add safe retention management that removes bulky audio artifacts and appropriate capture logs while preserving transcripts, summaries, metadata, and capture-failure evidence; include dry-run, age/size filters, explicit confirmation or force, and safeguards for active or retryable sessions.
 - [ ] End-to-end mode tests: Exercise every packaged mode with real audio, including a multi-hour game capture and representative lecture, CBT, journal, and meeting sessions; review documents and capture validity.
 - [ ] Mode prompt snapshots: Decide whether to snapshot the mode manifest/prompt, or at least its version/hash, so a later `retry` remains reproducible after definitions change.

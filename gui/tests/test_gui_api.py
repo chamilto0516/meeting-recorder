@@ -8,9 +8,9 @@ from meeting_recorder.audio import SourceInfo
 
 
 class GuiApiTests(unittest.TestCase):
-    @patch("meeting_recorder.gui_api.audio.get_default_sink_monitor", return_value="system.monitor")
-    @patch("meeting_recorder.gui_api.audio.get_default_source", return_value="mic.default")
-    @patch("meeting_recorder.gui_api.audio.list_sources")
+    @patch("meeting_recorder.device_selection.audio.get_default_sink_monitor", return_value="system.monitor")
+    @patch("meeting_recorder.device_selection.audio.get_default_source", return_value="mic.default")
+    @patch("meeting_recorder.device_selection.audio.list_sources")
     def test_devices_split_microphones_and_monitors(self, sources, *_):
         sources.return_value = [
             SourceInfo("1", "mic.default", "RUNNING"),
@@ -19,3 +19,5 @@ class GuiApiTests(unittest.TestCase):
         microphones, systems = gui_api.devices()
         self.assertEqual([(d.id, d.is_default) for d in microphones], [("mic.default", True)])
         self.assertEqual([(d.id, d.is_default) for d in systems], [("system.monitor", True)])
+        self.assertEqual(microphones[0].token, "m1")
+        self.assertEqual(systems[0].token, "o1")

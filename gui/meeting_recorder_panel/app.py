@@ -166,7 +166,7 @@ class Panel(QWidget):
                 for device in devices:
                     # The visible value and item data are the exact source names
                     # accepted by `meeting-recorder start --mic/--system-source`.
-                    combo.addItem(device.id + (" (default)" if device.is_default else ""), device.id)
+                    combo.addItem(device.display, device.id)
                 default_index = next((i for i, device in enumerate(devices) if device.is_default), 0)
                 combo.setCurrentIndex(default_index)
             else: combo.addItem(fallback, None)

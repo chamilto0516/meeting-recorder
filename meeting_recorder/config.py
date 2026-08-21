@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from yaml.nodes import MappingNode, ScalarNode
+
+from meeting_recorder.errors import ConfigError
 
 APP_NAME = "meeting-recorder"
 
@@ -94,11 +98,18 @@ class AppConfig:
     sample_rate: int
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    device_config: Path | None = None
+    device_aliases: dict[str, str] = field(default_factory=dict)
 
 
 def default_config_path() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / APP_NAME / "config.yaml"
+
+
+def default_device_config_path() -> Path:
+    """Return the separately managed, user-editable device-alias file."""
+    return default_config_path().with_name("devices.yaml")
 
 
 def default_data_dir() -> Path:
@@ -124,6 +135,50 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data or {}
 
 
+_ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_SHORT_SELECTOR_RE = re.compile(r"^[mo][1-9][0-9]*$")
+
+
+def load_device_aliases(path: Path) -> dict[str, str]:
+    """Load and validate the device-alias sidecar without requiring it to exist."""
+    if not path.exists():
+        return {}
+    try:
+        contents = path.read_text(encoding="utf-8")
+        document = yaml.compose(contents)
+        data = yaml.safe_load(contents) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"Could not read device config {path}: {exc}") from exc
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ConfigError(f"Device config {path} must be a YAML mapping with version: 1.")
+    aliases = data.get("aliases", {})
+    if not isinstance(aliases, dict):
+        raise ConfigError(f"Device config {path} field 'aliases' must be a mapping.")
+    result: dict[str, str] = {}
+    if isinstance(document, MappingNode):
+        aliases_node = next(
+            (value for key, value in document.value
+             if isinstance(key, ScalarNode) and key.value == "aliases"),
+            None,
+        )
+        if isinstance(aliases_node, MappingNode):
+            raw_aliases = [key.value for key, _ in aliases_node.value if isinstance(key, ScalarNode)]
+            duplicates = {alias for alias in raw_aliases if raw_aliases.count(alias) > 1}
+            if duplicates:
+                raise ConfigError(f"Duplicate device alias(es) in {path}: {', '.join(sorted(duplicates))}.")
+    for alias, source in aliases.items():
+        if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
+            raise ConfigError(
+                f"Invalid device alias {alias!r} in {path}. Use lowercase letters, numbers, and hyphens."
+            )
+        if _SHORT_SELECTOR_RE.fullmatch(alias):
+            raise ConfigError(f"Device alias {alias!r} in {path} is reserved for live short selectors.")
+        if not isinstance(source, str) or not source.strip():
+            raise ConfigError(f"Device alias {alias!r} in {path} must map to a source name string.")
+        result[alias] = source.strip()
+    return result
+
+
 def load_config(args: Any) -> AppConfig:
     """Build the effective config for this invocation.
 
@@ -132,6 +187,7 @@ def load_config(args: Any) -> AppConfig:
     (e.g. `list-devices` has no `--llm-model`).
     """
     config_path = getattr(args, "config", None) or default_config_path()
+    device_config = getattr(args, "device_config", None) or default_device_config_path()
     merged = _deep_merge(DEFAULTS, _load_yaml(Path(config_path)))
 
     def env(name: str) -> Optional[str]:
@@ -180,11 +236,17 @@ def load_config(args: Any) -> AppConfig:
 
     data_dir = Path(merged["data_dir"]) if merged["data_dir"] else default_data_dir()
 
+    aliases = (
+        {} if getattr(args, "command", None) == "devices" and getattr(args, "devices_command", None) == "init"
+        else load_device_aliases(Path(device_config))
+    )
     return AppConfig(
         data_dir=data_dir,
         sample_rate=int(merged["audio"]["sample_rate"]),
         whisper=WhisperConfig.from_dict(merged["whisper"]),
         llm=LLMConfig.from_dict(merged["llm"]),
+        device_config=Path(device_config),
+        device_aliases=aliases,
     )
 
 

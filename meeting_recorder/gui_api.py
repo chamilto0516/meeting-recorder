@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from meeting_recorder import audio, cli, config, state
+from meeting_recorder import cli, config, device_selection, state
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,14 @@ class Device:
     id: str
     label: str
     is_default: bool
+    token: str
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def display(self) -> str:
+        parts = [self.token, *self.aliases, self.label]
+        text = " · ".join(parts)
+        return text + (" (default)" if self.is_default else "")
 
 
 @dataclass(frozen=True)
@@ -38,12 +46,14 @@ class ActiveSession:
 
 
 def devices() -> tuple[list[Device], list[Device]]:
-    sources = audio.list_sources()
-    default_mic, default_system = audio.get_default_source(), audio.get_default_sink_monitor()
-    label = lambda source: source.name.replace("alsa_input.", "").replace("alsa_output.", "")
+    cfg = config.load_config(_args())
+    candidates = device_selection.discover(cfg.device_aliases)
+    device = lambda candidate: Device(
+        candidate.source, candidate.label, candidate.is_default, candidate.token, candidate.aliases
+    )
     return (
-        [Device(s.name, label(s), s.name == default_mic) for s in sources if not s.is_monitor],
-        [Device(s.name, label(s), s.name == default_system) for s in sources if s.is_monitor],
+        [device(candidate) for candidate in candidates if candidate.kind == "mic"],
+        [device(candidate) for candidate in candidates if candidate.kind == "output"],
     )
 
 
@@ -63,7 +73,8 @@ def active_session() -> ActiveSession | None:
 def _args(**values) -> Namespace:
     defaults = dict(
         config=None, data_dir=None, verbose=False, mode="meeting", mics=None,
-        system_source=None, sample_rate=None, meeting_name=None, lecture=False, game=False,
+        device_config=None, system_source=None, sample_rate=None, meeting_name=None, lecture=False, game=False,
+        allow_llm_device_selection=False,
         skip_transcription=False, skip_summary=False, whisper_model=None,
         whisper_device=None, whisper_compute_type=None, language=None, llm_model=None,
         llm_endpoint=None, llm_api_key=None,

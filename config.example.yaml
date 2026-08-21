@@ -12,6 +12,11 @@
 audio:
   sample_rate: 48000
 
+# Device aliases are intentionally kept in a separate, user-editable file so
+# `meeting-recorder devices init` never needs to rewrite this configuration.
+# Default: ~/.config/meeting-recorder/devices.yaml
+# Override for a command with: --device-config /path/to/devices.yaml
+
 whisper:
   # Any faster-whisper/CTranslate2 model size or path: tiny, base, small, medium,
   # large-v3, or a local/HF model directory.

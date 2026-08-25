@@ -219,7 +219,7 @@ def resolve_with_llm(
     try:
         import litellm
 
-        response = litellm.completion(
+        request = dict(
             model=llm.model,
             api_base=llm.endpoint,
             api_key=llm.api_key,
@@ -232,6 +232,9 @@ def resolve_with_llm(
                 {"role": "user", "content": json.dumps({"hint": hint, "candidates": payload})},
             ],
         )
+        if llm.reasoning_effort:
+            request["reasoning_effort"] = llm.reasoning_effort
+        response = litellm.completion(**request)
         parsed = json.loads(_response_text(response))
         selector = parsed.get("selector") if isinstance(parsed, dict) else None
     except Exception as exc:  # noqa: BLE001 - provider errors are shown as selection errors

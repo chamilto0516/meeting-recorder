@@ -101,7 +101,7 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
         ) from exc
 
     try:
-        response = litellm.completion(
+        request = dict(
             model=config.model,
             api_base=config.endpoint,
             api_key=config.api_key,
@@ -110,6 +110,9 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        if config.reasoning_effort:
+            request["reasoning_effort"] = config.reasoning_effort
+        response = litellm.completion(**request)
         return _extract_response_text(response)
     except Exception as exc:  # noqa: BLE001 - surface as our own error type
         if _is_context_limit_error(exc):

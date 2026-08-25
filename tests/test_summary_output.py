@@ -134,6 +134,21 @@ class SummaryOutputTests(unittest.TestCase):
             result = summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
         self.assertEqual(result, "# Meeting Summary\n\nDone.")
 
+    def test_call_llm_forwards_configured_reasoning_effort(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "choices": [{"message": {"content": "# Meeting Summary\n\nDone."}}]
+        })
+        llm = config.LLMConfig(
+            model="REASONING-gpt56luna-c1",
+            endpoint="https://proxy.example.test/v1",
+            reasoning_effort="high",
+        )
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            summarize._call_llm("Prompt", "Transcript", llm)
+        self.assertEqual(fake_litellm.completion.call_args.kwargs["model"], "REASONING-gpt56luna-c1")
+        self.assertEqual(fake_litellm.completion.call_args.kwargs["reasoning_effort"], "high")
+
     def test_call_llm_extracts_responses_api_output_without_reasoning(self) -> None:
         fake_litellm = types.ModuleType("litellm")
         fake_litellm.completion = Mock(return_value={

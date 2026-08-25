@@ -40,6 +40,7 @@ DEFAULTS: dict[str, Any] = {
         "model": "ollama/llama3.1",
         "endpoint": "http://localhost:11434",
         "api_key": None,
+        "reasoning_effort": None,
     },
 }
 
@@ -69,12 +70,14 @@ class LLMConfig:
     model: str = "ollama/llama3.1"
     endpoint: str = "http://localhost:11434"
     api_key: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
             "endpoint": self.endpoint,
             "api_key": self.api_key,
+            "reasoning_effort": self.reasoning_effort,
         }
 
     def to_session_dict(self) -> dict[str, Any]:

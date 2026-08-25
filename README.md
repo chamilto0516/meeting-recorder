@@ -268,6 +268,7 @@ llm:
   model: ollama/llama3.1          # LiteLLM model string
   endpoint: http://localhost:11434
   api_key: null
+  reasoning_effort: null          # optional, forwarded to supporting providers
 ```
 
 * **Local Ollama (default)**: `model: ollama/<name>`, `endpoint:
@@ -277,6 +278,10 @@ llm:
   `model` to whatever LiteLLM expects for that provider (e.g.
   `openai/gpt-4o-mini`, `litellm_proxy/my-model`), point `endpoint` at that
   server, and set `api_key`. No code changes needed.
+  For the supplied Owlbear proxy configuration, use
+  `model: REASONING-gpt56luna-c1` and `reasoning_effort: high`; set `endpoint`
+  to the proxy's actual base URL. The model list does not itself specify that
+  URL or the proxy authentication policy.
 * Summarization sends the complete transcript and mode prompt in one LLM call.
   Configure a model whose context window is large enough for the full transcript,
   prompt, and response. The recorder fails clearly and remains retryable if the

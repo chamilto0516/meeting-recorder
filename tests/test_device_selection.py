@@ -8,7 +8,7 @@ from argparse import Namespace
 from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from meeting_recorder import cli, config, device_selection
 from meeting_recorder.audio import SourceInfo
@@ -87,6 +87,19 @@ class DeviceSelectionTests(unittest.TestCase):
             )
         self.assertEqual(resolved.token, "m2")
         self.assertEqual(called, [True])
+
+    def test_llm_device_selection_forwards_configured_reasoning_effort(self):
+        completion = Mock(
+            return_value={"choices": [{"message": {"content": '{"selector": "m2"}'}}]}
+        )
+        fake_llm = SimpleNamespace(completion=completion)
+        with patch.dict(sys.modules, {"litellm": fake_llm}):
+            device_selection.resolve(
+                "the thing on my head", "mic", self.candidates, self.aliases,
+                allow_llm=True,
+                llm=config.LLMConfig(reasoning_effort="high"),
+            )
+        self.assertEqual(completion.call_args.kwargs["reasoning_effort"], "high")
 
     def test_llm_invalid_candidate_is_rejected(self):
         fake_llm = SimpleNamespace(completion=lambda **_: {"choices": [{"message": {"content": '{"selector": "o1"}'}}]})

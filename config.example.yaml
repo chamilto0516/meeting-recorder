@@ -30,8 +30,8 @@ whisper:
 
 # LiteLLM is used as the abstraction layer for the summarization call, so the
 # same code path works whether you're pointing at a local Ollama server, a
-# hosted LiteLLM proxy, or any other LiteLLM-supported provider. Just swap
-# these three values -- no code changes required.
+# hosted LiteLLM proxy, or any other LiteLLM-supported provider. The optional
+# reasoning_effort is forwarded only when configured.
 llm:
   # LiteLLM model string. For Ollama, this is "ollama/<model-name>".
   # For a LiteLLM proxy or OpenAI-compatible endpoint, use the model name your
@@ -43,3 +43,14 @@ llm:
   endpoint: http://localhost:11434
   # API key, if your endpoint requires one. Local Ollama does not.
   api_key: null
+  # Optional provider-supported reasoning setting, e.g. high for GPT-5.6 Luna.
+  reasoning_effort: null
+
+# Example: route summaries through the Owlbear LiteLLM alias supplied by your
+# proxy configuration. Replace the endpoint and api_key with that proxy's URL
+# and credentials; the supplied model_list itself does not declare them.
+# llm:
+#   model: REASONING-gpt56luna-c1
+#   endpoint: http://your-litellm-proxy:4000/v1
+#   api_key: null
+#   reasoning_effort: high

@@ -173,6 +173,49 @@ meeting-recorder retry
 valid transcript was already saved. While a session is awaiting processing,
 finish it with `retry` before starting a new recording.
 
+### Reprocess a completed session
+
+Completed sessions can regenerate their documents from the saved transcript
+using the mode's current packaged prompt. This is useful after improving a
+standard mode prompt and does not require retained audio:
+
+```bash
+meeting-recorder reprocess 2026-08-20_14-30-00_Project-Review
+```
+
+Add `--retranscribe` to recreate `transcript.txt` from the retained
+`mixed.wav` before summarizing, for example after changing Whisper settings:
+
+```bash
+meeting-recorder reprocess 2026-08-20_14-30-00_Project-Review \
+  --retranscribe --whisper-model small
+```
+
+The prior transcript and generated documents are copied to the session's
+`.reprocess-history/<timestamp>/` directory before replacement. New sessions
+also store the original mode definition and prompt in `session.json`; pass
+`--use-saved-prompt` to reproduce that prompt instead of using the current
+one. For a legacy session without `session.json`, specify `--mode MODE`.
+
+### Clean up retained audio
+
+`cleanup` scans all session directories and prints a size-aware deletion plan.
+By default it keeps every recorder-owned WAV file for 7 days, keeps only
+`mixed.wav` from day 7 through day 14, and removes recorder-owned WAV files
+after day 14. Transcripts, summaries, metadata, capture-validation reports,
+failed captures, and active or retryable sessions are left untouched.
+
+```bash
+meeting-recorder cleanup --dry-run  # report only
+meeting-recorder cleanup            # report, then ask [y/N]
+meeting-recorder cleanup --yes      # report and run non-interactively
+```
+
+The command never follows symlinks or deletes unexpected WAV filenames. It
+rescans after confirmation and refuses to continue if the plan changed. For
+completed, successfully validated sessions, `ffmpeg.log` expires with
+`mixed.wav`; failed-capture logs are retained.
+
 ### Tabletop-RPG game mode
 
 `--mode game` records one DM microphone and the player/system-audio track, then
@@ -204,6 +247,8 @@ deprecated aliases for compatibility.
 ```bash
 meeting-recorder status    # recording status or a retryable processing stage
 meeting-recorder retry     # resume a saved transcription/summarization
+meeting-recorder reprocess SESSION_ID  # regenerate a completed session
+meeting-recorder cleanup --dry-run     # preview expired audio
 ```
 
 ## Where files go
@@ -220,6 +265,8 @@ ffmpeg.log        # ffmpeg's own log for that session
 capture-validation.json  # per-track WAV format/duration validation report
 transcript.txt    # faster-whisper output
 summary.md or mode-specific Markdown outputs
+session.json      # durable non-secret metadata and original mode/prompt snapshot
+.reprocess-history/  # previous outputs retained when a session is reprocessed
 ```
 
 Override the base directory with `--data-dir` or `MEETING_RECORDER_DATA_DIR`.
@@ -240,7 +287,9 @@ Settings can be set in three layers, from lowest to highest precedence:
    `MEETING_RECORDER_LLM_ENDPOINT`, `MEETING_RECORDER_LLM_API_KEY`,
    `MEETING_RECORDER_WHISPER_MODEL`, `MEETING_RECORDER_WHISPER_DEVICE`,
    `MEETING_RECORDER_WHISPER_COMPUTE_TYPE`, `MEETING_RECORDER_WHISPER_LANGUAGE`,
-   `MEETING_RECORDER_DATA_DIR`, `MEETING_RECORDER_SAMPLE_RATE`)
+   `MEETING_RECORDER_DATA_DIR`, `MEETING_RECORDER_SAMPLE_RATE`,
+   `MEETING_RECORDER_CLEANUP_RAW_AUDIO_DAYS`,
+   `MEETING_RECORDER_CLEANUP_MIXED_AUDIO_DAYS`)
 4. CLI flags (`--whisper-model`, `--llm-endpoint`, etc.)
 
 LLM API keys are never written to the active-session state file. If a remote
@@ -253,6 +302,18 @@ session's state so `stop` (which may run minutes or hours later, in a
 different shell) uses the same settings automatically -- but you can also
 override them again at `stop` time (e.g. to re-summarize with a different
 model without re-recording).
+
+Configure audio retention independently of processing settings:
+
+```yaml
+cleanup:
+  raw_audio_days: 7
+  mixed_audio_days: 14
+```
+
+Both values are rolling 24-hour periods measured from the session end time.
+`mixed_audio_days` must be at least `raw_audio_days`. Command-line overrides
+are available as `cleanup --raw-audio-days N --mixed-audio-days N`.
 
 ### Configuring the summarization backend
 
@@ -334,9 +395,11 @@ init` never overwrites an existing one unless given `--force`.
 meeting_recorder/
   cli.py         argparse entry point (start/stop/status/list-devices)
   config.py      layered config (defaults -> file -> env -> CLI)
+  cleanup.py     retention planning, reporting, and guarded deletion
   audio.py       PipeWire device discovery + FFmpeg recording (start/stop)
   device_selection.py  live mN/oN selectors, aliases, local matching, optional LLM validation
   state.py       session persistence between the start and stop invocations
+  session_archive.py  durable per-session metadata and prompt snapshots
   modes.py       validated mode registry and packaged prompt loading
   modes/         modes.yaml plus one prompt asset per recording mode
   transcribe.py  faster-whisper wrapper

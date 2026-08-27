@@ -2,6 +2,8 @@
 
     meeting-recorder start   [options]   # begin background recording
     meeting-recorder stop    [options]   # stop, transcribe, summarize
+    meeting-recorder reprocess SESSION   # regenerate a completed session
+    meeting-recorder cleanup             # preview/delete expired audio
     meeting-recorder status              # is a recording currently running?
     meeting-recorder list-devices        # show available PipeWire/Pulse sources
 """
@@ -11,12 +13,23 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from meeting_recorder import audio, config as config_mod, device_selection, modes, state, summarize, transcribe
+from meeting_recorder import (
+    audio,
+    cleanup as cleanup_mod,
+    config as config_mod,
+    device_selection,
+    modes,
+    session_archive,
+    state,
+    summarize,
+    transcribe,
+)
 from meeting_recorder.errors import CaptureValidationError, ConfigError, MeetingRecorderError
 
 logger = logging.getLogger("meeting_recorder")
@@ -174,6 +187,37 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_processing_args(retry_p)
     retry_p.set_defaults(func=cmd_retry)
 
+    reprocess_p = subparsers.add_parser(
+        "reprocess", help="Regenerate documents for a completed session"
+    )
+    reprocess_p.add_argument("session", metavar="SESSION_ID", help="Exact session directory name")
+    reprocess_p.add_argument(
+        "--retranscribe",
+        action="store_true",
+        help="Recreate transcript.txt from mixed.wav before regenerating documents",
+    )
+    reprocess_p.add_argument(
+        "--mode",
+        metavar="MODE",
+        help="Override the recorded mode (required for legacy sessions without metadata)",
+    )
+    reprocess_p.add_argument(
+        "--use-saved-prompt",
+        action="store_true",
+        help="Use the prompt snapshot recorded with the session instead of the current mode prompt",
+    )
+    _add_common_processing_args(reprocess_p)
+    reprocess_p.set_defaults(func=cmd_reprocess)
+
+    cleanup_p = subparsers.add_parser(
+        "cleanup", help="Preview and remove expired session audio"
+    )
+    cleanup_p.add_argument("--dry-run", action="store_true", help="Print the plan without prompting or deleting")
+    cleanup_p.add_argument("--yes", action="store_true", help="Delete without an interactive confirmation")
+    cleanup_p.add_argument("--raw-audio-days", type=int, help="Override raw-track retention days")
+    cleanup_p.add_argument("--mixed-audio-days", type=int, help="Override mixed-track retention days")
+    cleanup_p.set_defaults(func=cmd_cleanup)
+
     status_p = subparsers.add_parser("status", help="Show whether a recording is active")
     status_p.set_defaults(func=cmd_status)
 
@@ -309,6 +353,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             llm=cfg.llm.to_session_dict(),
         )
         state.save_session(session)
+        session_archive.save_manifest(session, mode=mode)
 
         logger.info("Recording started (pid %s).", handle.pid)
         logger.info("Run 'meeting-recorder stop' when the meeting ends.")
@@ -357,6 +402,7 @@ def cmd_stop(args: argparse.Namespace, cfg: config_mod.AppConfig, progress_callb
         session.ended_at = datetime.now(timezone.utc).isoformat()
         session.last_error = None
         state.save_session(session)
+        session_archive.save_manifest(session)
 
     logger.info("Recording saved. Tracks: %s", ", ".join(session.track_files.keys()))
     if args.skip_transcription:
@@ -373,6 +419,7 @@ def _save_progress(session: state.Session) -> None:
         if current is None or current.session_id != session.session_id:
             raise MeetingRecorderError("Saved session changed while processing; refusing to overwrite it.")
         state.save_session(session)
+        session_archive.save_manifest(session)
 
 
 def _record_processing_error(session: state.Session, exc: Exception) -> None:
@@ -471,6 +518,7 @@ def _process_session(
         current = state.load_session()
         if current is None or current.session_id != session.session_id:
             raise MeetingRecorderError("Saved session changed while processing; refusing to clear it.")
+        session_archive.save_manifest(session, status="completed")
         state.clear_session()
     if progress_callback:
         progress_callback("done", 100)
@@ -493,6 +541,189 @@ def cmd_retry(args: argparse.Namespace, cfg: config_mod.AppConfig, progress_call
             )
             return 1
     return _process_session(session, args, cfg, progress_callback=progress_callback)
+
+
+def _safe_manifest_file(session_dir: Path, value: object, default: str) -> Path:
+    name = value if isinstance(value, str) and value else default
+    if Path(name).name != name:
+        raise MeetingRecorderError(f"Unsafe artifact path in {session_archive.manifest_path(session_dir)}.")
+    return session_dir / name
+
+
+def _resolve_completed_session(args: argparse.Namespace, cfg: config_mod.AppConfig) -> tuple[state.Session, dict | None]:
+    if Path(args.session).name != args.session or args.session in {".", ".."}:
+        raise MeetingRecorderError("SESSION_ID must be an exact session directory name.")
+    session_dir = cfg.data_dir / args.session
+    if not session_dir.is_dir() or session_dir.is_symlink():
+        raise MeetingRecorderError(f"Session directory was not found: {session_dir}")
+    manifest = session_archive.load_manifest(session_dir)
+    if manifest is None:
+        if not args.mode:
+            raise MeetingRecorderError(
+                "This legacy session has no session.json; specify --mode MODE to reprocess it."
+            )
+        return state.Session(
+            session_id=args.session,
+            pid=0,
+            process=None,
+            started_at="",
+            ended_at=None,
+            session_dir=str(session_dir),
+            mixed_file=str(session_dir / "mixed.wav"),
+            track_files={},
+            mics=[],
+            system_source=None,
+            sample_rate=cfg.sample_rate,
+            mode=args.mode,
+            whisper=cfg.whisper.to_dict(),
+            llm=cfg.llm.to_session_dict(),
+            status="transcribed",
+            transcript_file=str(session_dir / "transcript.txt"),
+        ), None
+    saved = manifest["session"]
+    audio_info = saved.get("audio", {})
+    if not isinstance(audio_info, dict):
+        raise MeetingRecorderError("Saved session audio metadata is malformed.")
+    mode_name = args.mode or saved.get("mode")
+    if not isinstance(mode_name, str):
+        raise MeetingRecorderError("Saved session mode metadata is missing.")
+    return state.Session(
+        session_id=saved.get("session_id", args.session),
+        pid=0,
+        process=None,
+        started_at=saved.get("started_at", ""),
+        ended_at=saved.get("ended_at"),
+        session_dir=str(session_dir),
+        mixed_file=str(_safe_manifest_file(session_dir, audio_info.get("mixed"), "mixed.wav")),
+        track_files={},
+        mics=list(saved.get("mics", [])),
+        system_source=saved.get("system_source"),
+        sample_rate=saved.get("sample_rate", cfg.sample_rate),
+        log_file=str(_safe_manifest_file(session_dir, saved.get("log_file"), "ffmpeg.log")),
+        meeting_name=saved.get("meeting_name"),
+        mode=mode_name,
+        whisper=dict(saved.get("whisper", {})),
+        llm=dict(saved.get("llm", {})),
+        status="transcribed",
+        transcript_file=str(_safe_manifest_file(session_dir, saved.get("transcript_file"), "transcript.txt")),
+        summary_file=saved.get("summary_file"),
+        capture_report=saved.get("capture_report"),
+    ), manifest
+
+
+def _backup_reprocess_inputs(session_dir: Path, filenames: set[str]) -> Path | None:
+    existing = [
+        session_dir / name
+        for name in sorted(filenames)
+        if (session_dir / name).is_file() and not (session_dir / name).is_symlink()
+    ]
+    if not existing:
+        return None
+    history_root = session_dir / ".reprocess-history"
+    if history_root.is_symlink() or (history_root.exists() and not history_root.is_dir()):
+        raise MeetingRecorderError(f"Reprocess history path is unsafe: {history_root}")
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+    destination = history_root / stamp
+    destination.mkdir(parents=True, exist_ok=False)
+    for path in existing:
+        shutil.copy2(path, destination / path.name)
+    return destination
+
+
+def cmd_reprocess(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+    with state.session_lock():
+        session, manifest = _resolve_completed_session(args, cfg)
+        current = state.load_session()
+        if current is not None and Path(current.session_dir) == Path(session.session_dir):
+            raise MeetingRecorderError(
+                "This session is active or retryable; use stop/retry before reprocessing it."
+            )
+
+    if args.use_saved_prompt:
+        snapshot = manifest.get("mode_snapshot") if manifest else None
+        if not isinstance(snapshot, dict):
+            raise MeetingRecorderError("This session has no saved mode prompt.")
+        mode = modes.mode_from_snapshot(snapshot)
+        if args.mode and args.mode != mode.name:
+            raise MeetingRecorderError("--mode cannot be combined with a different saved prompt.")
+    else:
+        mode = modes.get_mode(session.mode)
+
+    session_dir = Path(session.session_dir)
+    transcript_path = Path(session.transcript_file or session_dir / "transcript.txt")
+    if transcript_path.is_symlink():
+        raise MeetingRecorderError(f"Refusing to follow transcript symlink: {transcript_path}")
+    whisper_cfg = config_mod.override_whisper(
+        config_mod.WhisperConfig.from_dict(session.whisper), args
+    )
+    llm_cfg = config_mod.override_llm(
+        replace(config_mod.LLMConfig.from_dict(session.llm), api_key=cfg.llm.api_key), args
+    )
+    if args.retranscribe:
+        mixed_file = Path(session.mixed_file)
+        if not mixed_file.is_file() or mixed_file.is_symlink() or mixed_file.stat().st_size == 0:
+            raise MeetingRecorderError(
+                f"Cannot retranscribe: mixed audio is missing or expired under the cleanup policy: {mixed_file}"
+            )
+        logger.info("Retranscribing %s with faster-whisper (model=%s)...", session.session_id, whisper_cfg.model_size)
+        transcript = transcribe.transcribe_audio(mixed_file, whisper_cfg)
+    else:
+        try:
+            transcript = transcript_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise MeetingRecorderError(f"Could not read transcript at {transcript_path}: {exc}") from exc
+    logger.info("Regenerating %s documents with the %s prompt...", session.session_id, mode.name)
+    summaries = summarize.summarize_mode(transcript, llm_cfg, mode)
+    backup_names = {"transcript.txt"} if args.retranscribe else set()
+    backup_names.update(artifact.filename for artifact in mode.artifacts)
+    unsafe_outputs = [session_dir / name for name in backup_names if (session_dir / name).is_symlink()]
+    if unsafe_outputs:
+        raise MeetingRecorderError(f"Refusing to replace output symlink: {unsafe_outputs[0]}")
+    history_dir = _backup_reprocess_inputs(session_dir, backup_names)
+    if args.retranscribe:
+        transcript_path = transcribe.save_transcript(transcript, session_dir)
+    output_paths = summarize.save_mode_summaries(summaries, session_dir, mode)
+    session.mode = mode.name
+    session.transcript_file = str(transcript_path)
+    session.summary_file = str(output_paths[-1])
+    run = {
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "retranscribed": bool(args.retranscribe),
+        "prompt_source": "saved" if args.use_saved_prompt else "current",
+        "mode": mode.name,
+        "history_dir": str(history_dir.relative_to(session_dir)) if history_dir else None,
+        "outputs": [path.name for path in output_paths],
+    }
+    session_archive.save_manifest(session, mode=mode, status="completed", reprocess_run=run)
+    print(f"Reprocessed {session.session_id}.")
+    for output_path in output_paths:
+        print(f"  {output_path}")
+    if history_dir:
+        print(f"Previous outputs: {history_dir}")
+    return 0
+
+
+def cmd_cleanup(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
+    plan = cleanup_mod.build_plan(cfg.data_dir, cfg.cleanup)
+    print(cleanup_mod.render_plan(plan, verbose=args.verbose))
+    if args.dry_run or not plan.candidates:
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            logger.error("Cleanup requires an interactive terminal or --yes; nothing was deleted.")
+            return 1
+        answer = input("\nContinue? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("Cleanup cancelled.")
+            return 0
+    with state.session_lock():
+        confirmed = cleanup_mod.build_plan(cfg.data_dir, cfg.cleanup)
+        if confirmed.signature() != plan.signature():
+            logger.error("Cleanup plan changed after preview; nothing was deleted. Run cleanup again.")
+            return 1
+        result = cleanup_mod.execute_plan(confirmed)
+    print(cleanup_mod.render_result(result))
+    return 0 if not result.failures else 1
 
 
 def cmd_status(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:

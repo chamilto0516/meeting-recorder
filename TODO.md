@@ -4,9 +4,7 @@
 
 - [ ] Bluetooth echo: Investigate mic/speaker acoustic echo and cross-talk; determine whether PipeWire echo cancellation, source selection, or post-processing can improve transcripts when the mic hears meeting audio from the speakers.
 - [x] Smart mic and output selection: `--mic`/`--system-source` accept live short selectors, aliases, and safe close matches; optional LLM help is explicit and validated.
-- [ ] Session cleanup command: Add safe retention management that removes bulky audio artifacts and appropriate capture logs while preserving transcripts, summaries, metadata, and capture-failure evidence; include dry-run, age/size filters, explicit confirmation or force, and safeguards for active or retryable sessions.
 - [ ] End-to-end mode tests: Exercise every packaged mode with real audio, including a multi-hour game capture and representative lecture, CBT, journal, and meeting sessions; review documents and capture validity.
-- [ ] Mode prompt snapshots: Decide whether to snapshot the mode manifest/prompt, or at least its version/hash, so a later `retry` remains reproducible after definitions change.
 - [ ] Separate player prompt: Explore extracting the game-mode player recap into its own externally editable prompt while preserving the mode system’s combined game output.
 - [ ] Recording status indicator: Detect an active recording and show a slow gray-to-red flashing status-bar indicator; offer a right-click `Stop` action that runs the parameterless stop command.
 
@@ -23,6 +21,8 @@
 
 ## Completed
 
+- [x] Add a safe `cleanup` command with 7-day raw-track and 14-day mixed-audio retention defaults, a size-aware preview, explicit confirmation/dry-run automation, race checks, and protection for active, retryable, failed, unknown, or unsafe sessions.
+- [x] Add durable per-session metadata and mode prompt snapshots, plus `reprocess` support for current-prompt document regeneration or optional mixed-audio retranscription while preserving prior outputs.
 - [x] Build a local GUI that uses the CLI/session lifecycle to start, stop, and monitor recordings, name sessions, open outputs, and report when processing is ready.
 - [x] Add optional human-readable, path-safe session names.
 - [x] Make Markdown the default summary format.

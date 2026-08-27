@@ -42,6 +42,10 @@ DEFAULTS: dict[str, Any] = {
         "api_key": None,
         "reasoning_effort": None,
     },
+    "cleanup": {
+        "raw_audio_days": 7,
+        "mixed_audio_days": 14,
+    },
 }
 
 
@@ -91,6 +95,29 @@ class LLMConfig:
         return cls(**{k: data.get(k, getattr(cls, k, None)) for k in _fields(cls)})
 
 
+@dataclass(frozen=True)
+class CleanupConfig:
+    raw_audio_days: int = 7
+    mixed_audio_days: int = 14
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CleanupConfig":
+        raw_days = data.get("raw_audio_days", 7)
+        mixed_days = data.get("mixed_audio_days", 14)
+        for name, value in (
+            ("raw_audio_days", raw_days),
+            ("mixed_audio_days", mixed_days),
+        ):
+            if type(value) is not int or value < 0:
+                raise ConfigError(f"cleanup.{name} must be a non-negative integer.")
+        if mixed_days < raw_days:
+            raise ConfigError(
+                "cleanup.mixed_audio_days must be greater than or equal to "
+                "cleanup.raw_audio_days."
+            )
+        return cls(raw_days, mixed_days)
+
+
 def _fields(cls):
     return cls.__dataclass_fields__.keys()
 
@@ -103,6 +130,7 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     device_config: Path | None = None
     device_aliases: dict[str, str] = field(default_factory=dict)
+    cleanup: CleanupConfig = field(default_factory=CleanupConfig)
 
 
 def default_config_path() -> Path:
@@ -192,6 +220,8 @@ def load_config(args: Any) -> AppConfig:
     config_path = getattr(args, "config", None) or default_config_path()
     device_config = getattr(args, "device_config", None) or default_device_config_path()
     merged = _deep_merge(DEFAULTS, _load_yaml(Path(config_path)))
+    if not isinstance(merged.get("cleanup"), dict):
+        raise ConfigError("cleanup must be a YAML mapping.")
 
     def env(name: str) -> Optional[str]:
         return os.environ.get(f"MEETING_RECORDER_{name}")
@@ -214,6 +244,16 @@ def load_config(args: Any) -> AppConfig:
         merged["llm"]["endpoint"] = env("LLM_ENDPOINT")
     if env("LLM_API_KEY"):
         merged["llm"]["api_key"] = env("LLM_API_KEY")
+    if env("CLEANUP_RAW_AUDIO_DAYS"):
+        try:
+            merged["cleanup"]["raw_audio_days"] = int(env("CLEANUP_RAW_AUDIO_DAYS"))
+        except ValueError as exc:
+            raise ConfigError("MEETING_RECORDER_CLEANUP_RAW_AUDIO_DAYS must be an integer.") from exc
+    if env("CLEANUP_MIXED_AUDIO_DAYS"):
+        try:
+            merged["cleanup"]["mixed_audio_days"] = int(env("CLEANUP_MIXED_AUDIO_DAYS"))
+        except ValueError as exc:
+            raise ConfigError("MEETING_RECORDER_CLEANUP_MIXED_AUDIO_DAYS must be an integer.") from exc
 
     def cli(name: str) -> Optional[Any]:
         return getattr(args, name, None)
@@ -236,6 +276,10 @@ def load_config(args: Any) -> AppConfig:
         merged["llm"]["endpoint"] = cli("llm_endpoint")
     if cli("llm_api_key"):
         merged["llm"]["api_key"] = cli("llm_api_key")
+    if cli("raw_audio_days") is not None:
+        merged["cleanup"]["raw_audio_days"] = cli("raw_audio_days")
+    if cli("mixed_audio_days") is not None:
+        merged["cleanup"]["mixed_audio_days"] = cli("mixed_audio_days")
 
     data_dir = Path(merged["data_dir"]) if merged["data_dir"] else default_data_dir()
 
@@ -250,6 +294,7 @@ def load_config(args: Any) -> AppConfig:
         llm=LLMConfig.from_dict(merged["llm"]),
         device_config=Path(device_config),
         device_aliases=aliases,
+        cleanup=CleanupConfig.from_dict(merged.get("cleanup", {})),
     )
 
 

@@ -12,6 +12,13 @@
 audio:
   sample_rate: 48000
 
+# Retain all recorder-owned WAV files for 7 days, then keep only mixed.wav
+# through day 14. Transcripts, generated documents, session.json, and capture
+# validation evidence are retained indefinitely.
+cleanup:
+  raw_audio_days: 7
+  mixed_audio_days: 14
+
 # Device aliases are intentionally kept in a separate, user-editable file so
 # `meeting-recorder devices init` never needs to rewrite this configuration.
 # Default: ~/.config/meeting-recorder/devices.yaml

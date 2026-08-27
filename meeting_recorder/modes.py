@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
+from pathlib import Path
 import re
 from typing import Any
 
@@ -144,3 +146,82 @@ def get_mode(name: str) -> ModeDefinition:
     except KeyError as exc:
         available = ", ".join(sorted(load_modes()))
         raise MeetingRecorderError(f"Unknown mode '{name}'. Available modes: {available}.") from exc
+
+
+def mode_snapshot(mode: ModeDefinition) -> dict[str, Any]:
+    """Return a JSON-safe, immutable record of the prompt used by a session."""
+    return {
+        "name": mode.name,
+        "description": mode.description,
+        "capture": mode.capture,
+        "min_mics": mode.min_mics,
+        "max_mics": mode.max_mics,
+        "prompt_file": mode.prompt_file,
+        "prompt": mode.prompt,
+        "prompt_sha256": hashlib.sha256(mode.prompt.encode("utf-8")).hexdigest(),
+        "artifacts": [
+            {
+                "filename": artifact.filename,
+                "title": artifact.title,
+                "instruction": artifact.instruction,
+                "combine": list(artifact.combine),
+            }
+            for artifact in mode.artifacts
+        ],
+    }
+
+
+def mode_from_snapshot(snapshot: dict[str, Any]) -> ModeDefinition:
+    """Recreate a mode from a previously validated session snapshot."""
+    try:
+        name = snapshot["name"]
+        prompt = snapshot["prompt"]
+        raw_artifacts = snapshot["artifacts"]
+        if not isinstance(name, str) or not _MODE_NAME.fullmatch(name):
+            raise ValueError("invalid mode name")
+        if not isinstance(prompt, str) or not prompt:
+            raise ValueError("invalid prompt")
+        if not isinstance(raw_artifacts, list) or not raw_artifacts:
+            raise ValueError("invalid artifacts")
+        artifacts = tuple(
+            ModeArtifact(
+                filename=item["filename"],
+                title=item["title"],
+                instruction=item.get("instruction"),
+                combine=tuple(item.get("combine", [])),
+            )
+            for item in raw_artifacts
+        )
+        filenames = [artifact.filename for artifact in artifacts]
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("duplicate artifact filenames")
+        for artifact in artifacts:
+            if (
+                not isinstance(artifact.filename, str)
+                or not artifact.filename.endswith(".md")
+                or Path(artifact.filename).name != artifact.filename
+                or not isinstance(artifact.title, str)
+                or not artifact.title
+                or not all(
+                    isinstance(item, str) and item in filenames
+                    for item in artifact.combine
+                )
+            ):
+                raise ValueError("invalid artifact")
+        mode = ModeDefinition(
+            name=name,
+            description=snapshot["description"],
+            capture=snapshot["capture"],
+            min_mics=snapshot["min_mics"],
+            max_mics=snapshot["max_mics"],
+            prompt_file=snapshot["prompt_file"],
+            prompt=prompt,
+            artifacts=artifacts,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise MeetingRecorderError("Saved mode snapshot is malformed.") from exc
+    expected_hash = snapshot.get("prompt_sha256")
+    actual_hash = hashlib.sha256(mode.prompt.encode("utf-8")).hexdigest()
+    if expected_hash != actual_hash:
+        raise MeetingRecorderError("Saved mode prompt does not match its recorded hash.")
+    return mode

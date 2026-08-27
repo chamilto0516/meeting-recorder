@@ -24,6 +24,7 @@ class ModeArtifact:
     title: str
     instruction: str | None = None
     combine: tuple[str, ...] = ()
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ def load_modes() -> dict[str, ModeDefinition]:
             if not isinstance(artifact, dict):
                 raise _invalid(f"mode '{name}' artifact must be a mapping")
             filename, title, instruction = (artifact.get(key) for key in ("filename", "title", "instruction"))
+            private = artifact.get("private", False)
             if (not isinstance(filename, str) or not filename.endswith(".md") or "/" in filename
                     or filename in filenames):
                 raise _invalid(f"mode '{name}' artifact filenames must be unique Markdown basenames")
@@ -110,13 +112,15 @@ def load_modes() -> dict[str, ModeDefinition]:
                 raise _invalid(f"mode '{name}' artifact combine must be a list of artifact filenames")
             if not isinstance(title, str) or not title:
                 raise _invalid(f"mode '{name}' artifacts require a non-empty title")
+            if type(private) is not bool:
+                raise _invalid(f"mode '{name}' artifact private must be true or false")
             if combine:
                 if instruction is not None:
                     raise _invalid(f"mode '{name}' combined artifact cannot also have an instruction")
             elif not isinstance(instruction, str) or not instruction:
                 raise _invalid(f"mode '{name}' generated artifact requires an instruction")
             filenames.add(filename)
-            artifacts.append(ModeArtifact(filename, title, instruction, tuple(combine)))
+            artifacts.append(ModeArtifact(filename, title, instruction, tuple(combine), private))
         generated_filenames = {
             artifact.filename for artifact in artifacts if not artifact.combine
         }
@@ -165,6 +169,7 @@ def mode_snapshot(mode: ModeDefinition) -> dict[str, Any]:
                 "title": artifact.title,
                 "instruction": artifact.instruction,
                 "combine": list(artifact.combine),
+                "private": artifact.private,
             }
             for artifact in mode.artifacts
         ],
@@ -189,6 +194,7 @@ def mode_from_snapshot(snapshot: dict[str, Any]) -> ModeDefinition:
                 title=item["title"],
                 instruction=item.get("instruction"),
                 combine=tuple(item.get("combine", [])),
+                private=item.get("private", False),
             )
             for item in raw_artifacts
         )
@@ -202,6 +208,7 @@ def mode_from_snapshot(snapshot: dict[str, Any]) -> ModeDefinition:
                 or Path(artifact.filename).name != artifact.filename
                 or not isinstance(artifact.title, str)
                 or not artifact.title
+                or type(artifact.private) is not bool
                 or not all(
                     isinstance(item, str) and item in filenames
                     for item in artifact.combine

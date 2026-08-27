@@ -74,6 +74,7 @@ def _args(**values) -> Namespace:
     defaults = dict(
         config=None, data_dir=None, verbose=False, mode="meeting", mics=None,
         device_config=None, system_source=None, sample_rate=None, meeting_name=None, lecture=False, game=False,
+        player_context=None,
         allow_llm_device_selection=False,
         skip_transcription=False, skip_summary=False, whisper_model=None,
         whisper_device=None, whisper_compute_type=None, language=None, llm_model=None,
@@ -83,8 +84,14 @@ def _args(**values) -> Namespace:
     return Namespace(**defaults)
 
 
-def start(*, mics: list[str], system_source: str | None, mode: str, name: str | None) -> ActiveSession:
-    args = _args(mics=mics or None, system_source=system_source, mode=mode, meeting_name=name or None)
+def start(
+    *, mics: list[str], system_source: str | None, mode: str, name: str | None,
+    player_context: Path | None = None,
+) -> ActiveSession:
+    args = _args(
+        mics=mics or None, system_source=system_source, mode=mode,
+        meeting_name=name or None, player_context=player_context,
+    )
     cfg = config.load_config(args)
     if cli.cmd_start(args, cfg) != 0:
         raise RuntimeError("Recording could not be started; see the application log for details.")

@@ -23,6 +23,23 @@ modes:
       - filename: game-summary.md
         title: Game Summary Archive
         combine: [dm-continuity-brief.md, player-recap.md]
+  game-player:
+    description: Tabletop RPG sessions with player-focused notes and context updates
+    capture: mic-and-system
+    mics: {min: 1, max: 1}
+    prompt: game-player.md
+    artifacts:
+      - filename: player-recap.md
+        title: Player Recap
+        instruction: Produce the shareable player recap only.
+      - filename: character-notebook.md
+        title: Character Notebook
+        instruction: Produce the private character notebook only.
+        private: true
+      - filename: context-updates.md
+        title: Context Updates
+        instruction: Produce the private suggested context updates only.
+        private: true
   lecture:
     description: Lectures or classes as study-ready notes
     capture: system-only

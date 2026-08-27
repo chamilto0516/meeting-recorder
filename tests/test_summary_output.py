@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import types
 import unittest
+import stat
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -16,6 +17,11 @@ class SummaryOutputTests(unittest.TestCase):
             path = summarize.save_summary("## Summary\n\nHello", Path(temporary))
             self.assertEqual(path.name, "summary.md")
             self.assertEqual(path.read_text(encoding="utf-8"), "## Summary\n\nHello")
+
+    def test_private_summary_is_owner_readable_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = summarize.save_summary("Private", Path(temporary), "private.md", private=True)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_meeting_prompt_requires_markdown_sections(self) -> None:
         prompt = modes.get_mode("meeting").prompt

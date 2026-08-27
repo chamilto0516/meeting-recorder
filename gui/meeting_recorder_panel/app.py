@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
+    QFileDialog, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
     QStackedWidget, QStyle, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 from shiboken6 import isValid
@@ -21,7 +21,10 @@ from meeting_recorder import gui_api
 BG, SURFACE, TEXT, ACCENT, TINT, DARK, BORDER = (
     "#f2f2f3", "#e9e9ea", "#1d1f20", "#5980a6", "#eef6ff", "#1d2d3d", "#c9c9cb"
 )
-MODES = {"meeting": "Meeting", "game": "Game", "lecture": "Lecture", "cbt": "CBT", "journal": "Journal"}
+MODES = {
+    "meeting": "Meeting", "game": "Game", "game-player": "Player Game",
+    "lecture": "Lecture", "cbt": "CBT", "journal": "Journal",
+}
 SUCCESS, PROBLEM = "#3f7a4b", "#a64f4f"
 
 
@@ -111,6 +114,13 @@ class Panel(QWidget):
             radio = QRadioButton(label); radio.setProperty("mode", key); self.mode_group.addButton(radio); modes.addWidget(radio); radio.toggled.connect(self._mode_changed)
             if key == "meeting": radio.setChecked(True)
         self._field("Mode", mode_box)
+        self.player_context = QLineEdit(); self.player_context.setPlaceholderText("Optional private .md character context")
+        browse_context = QPushButton("Browse…"); browse_context.clicked.connect(self._choose_player_context)
+        context_row = QWidget(); context_layout = QHBoxLayout(context_row); context_layout.setContentsMargins(0, 0, 0, 0)
+        context_layout.addWidget(self.player_context); context_layout.addWidget(browse_context)
+        self.player_context_field = QWidget(); context_field_layout = QVBoxLayout(self.player_context_field); context_field_layout.setContentsMargins(0, 0, 0, 0); context_field_layout.setSpacing(5)
+        context_field_layout.addWidget(QLabel("Player context Markdown (optional)")); context_field_layout.addWidget(context_row)
+        self.record_layout.addWidget(self.player_context_field)
         self.name = QLineEdit(); self.name.setPlaceholderText("e.g. Weekly sync"); self._field("Session name (optional)", self.name)
         self.start_button = QPushButton("▶ Start Recording"); self.start_button.setObjectName("primary"); self.start_button.clicked.connect(self.start); self.record_layout.addWidget(self.start_button)
         self._mode_changed()
@@ -128,10 +138,19 @@ class Panel(QWidget):
         mode = self.mode_group.checkedButton().property("mode")
         mic_enabled, system_enabled = mode not in ("lecture", "cbt"), mode != "journal"
         self.mic1.setEnabled(mic_enabled); self.add_second.setEnabled(mic_enabled and mode == "meeting"); self.system.setEnabled(system_enabled)
+        if hasattr(self, "player_context_field"):
+            self.player_context_field.setVisible(mode == "game-player")
         required = (not mic_enabled or self.mic1.currentData()) and (not system_enabled or self.system.currentData())
         button = getattr(self, "start_button", None)
         if button is not None and isValid(button):
             button.setEnabled(bool(required))
+
+    def _choose_player_context(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select player context", "", "Markdown files (*.md *.markdown);;All files (*)"
+        )
+        if path:
+            self.player_context.setText(path)
 
     def _recording(self):
         display = QLabel(f"●  {self._format_time(self.elapsed_seconds)}"); display.setObjectName("timer"); display.setAlignment(Qt.AlignmentFlag.AlignCenter); self.record_layout.addWidget(display)
@@ -176,7 +195,8 @@ class Panel(QWidget):
         mics = [] if mode in ("lecture", "cbt") else [self.mic1.currentData()]
         if getattr(self, "second_enabled", False) and mode == "meeting": mics.append(self.mic2.currentData())
         source = None if mode == "journal" else self.system.currentData()
-        self._run(gui_api.start, mics=[m for m in mics if m], system_source=source, mode=mode, name=self.name.text().strip(), complete=self.started)
+        context = Path(self.player_context.text().strip()) if mode == "game-player" and self.player_context.text().strip() else None
+        self._run(gui_api.start, mics=[m for m in mics if m], system_source=source, mode=mode, name=self.name.text().strip(), player_context=context, complete=self.started)
 
     @Slot(object)
     def started(self, session):

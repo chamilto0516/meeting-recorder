@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import shutil
+import stat
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -72,6 +74,80 @@ def _add_common_processing_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+_PLAYER_CONTEXT_FILENAME = "player-context.md"
+
+
+def _read_player_context(path_value: Path | str) -> tuple[bytes, str, str]:
+    """Read a user-supplied Markdown context without following a symlink."""
+    path = Path(path_value)
+    if path.suffix.lower() not in {".md", ".markdown"}:
+        raise MeetingRecorderError("--player-context must name a Markdown (.md or .markdown) file.")
+    if path.is_symlink() or not path.is_file():
+        raise MeetingRecorderError(f"Player context must be a safe regular file: {path}")
+    try:
+        payload = path.read_bytes()
+        text = payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise MeetingRecorderError(f"Could not read UTF-8 player context {path}: {exc}") from exc
+    if not text.strip():
+        raise MeetingRecorderError(f"Player context is empty: {path}")
+    return payload, text, hashlib.sha256(payload).hexdigest()
+
+
+def _write_private_context(path: Path, payload: bytes) -> None:
+    """Create a session-local context snapshot with owner-only permissions."""
+    if path.exists() or path.is_symlink():
+        raise MeetingRecorderError(f"Refusing to replace existing player context snapshot: {path}")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise MeetingRecorderError(f"Could not save private player context at {path}: {exc}") from exc
+
+
+def _load_session_player_context(session: state.Session) -> tuple[bytes, str, str] | None:
+    """Load and verify the immutable context snapshot recorded with a session."""
+    if session.player_context_file is None and session.player_context_sha256 is None:
+        return None
+    if not session.player_context_file or not session.player_context_sha256:
+        raise MeetingRecorderError("Session player context metadata is incomplete.")
+    filename = Path(session.player_context_file)
+    if filename.name != session.player_context_file:
+        raise MeetingRecorderError("Session player context filename is unsafe.")
+    path = Path(session.session_dir) / filename
+    if path.is_symlink() or not path.is_file():
+        raise MeetingRecorderError(f"Player context snapshot is missing or unsafe: {path}")
+    if stat.S_IMODE(path.stat().st_mode) != 0o600:
+        raise MeetingRecorderError(f"Player context snapshot is not private: {path}")
+    try:
+        payload = path.read_bytes()
+        text = payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise MeetingRecorderError(f"Could not read saved player context {path}: {exc}") from exc
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != session.player_context_sha256:
+        raise MeetingRecorderError("Saved player context does not match its recorded hash.")
+    return payload, text, digest
+
+
+def _context_for_mode(
+    session: state.Session, mode: modes.ModeDefinition, override: Path | str | None = None
+) -> tuple[bytes, str, str] | None:
+    if override is not None:
+        if mode.name != "game-player":
+            raise MeetingRecorderError("--player-context can only be used with --mode game-player.")
+        return _read_player_context(override)
+    if mode.name != "game-player":
+        if session.player_context_file or session.player_context_sha256:
+            raise MeetingRecorderError("Only game-player sessions may contain player context metadata.")
+        return None
+    return _load_session_player_context(session)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="meeting-recorder",
@@ -110,6 +186,10 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument(
         "--mode", default="meeting", metavar="MODE",
         help="Recording mode (default: meeting; available modes are read from the packaged registry)",
+    )
+    start_p.add_argument(
+        "--player-context", type=Path, metavar="PATH",
+        help="Optional private Markdown context for '--mode game-player'; copied into the session.",
     )
     start_p.add_argument(
         "--allow-llm-device-selection",
@@ -200,6 +280,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         metavar="MODE",
         help="Override the recorded mode (required for legacy sessions without metadata)",
+    )
+    reprocess_p.add_argument(
+        "--player-context", type=Path, metavar="PATH",
+        help="Use an updated private Markdown context for this game-player reprocess run.",
     )
     reprocess_p.add_argument(
         "--use-saved-prompt",
@@ -296,6 +380,15 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         except MeetingRecorderError as exc:
             logger.error(str(exc))
             return 1
+        requested_context = getattr(args, "player_context", None)
+        if requested_context is not None and mode.name != "game-player":
+            logger.error("--player-context can only be used with --mode game-player.")
+            return 1
+        try:
+            player_context = _read_player_context(requested_context) if requested_context else None
+        except MeetingRecorderError as exc:
+            logger.error(str(exc))
+            return 1
         if mode.capture == "system-only" and args.mics:
             logger.error("--mode %s records system audio only and cannot be combined with --mic.", mode.name)
             return 1
@@ -335,6 +428,16 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         logger.info("System audio source: %s", system_source or "none")
         logger.info("Session directory: %s", session_dir)
         handle = audio.start_recording(mics, system_source, session_dir, cfg.sample_rate)
+        if player_context is not None:
+            try:
+                _write_private_context(session_dir / _PLAYER_CONTEXT_FILENAME, player_context[0])
+            except MeetingRecorderError as exc:
+                logger.error("%s", exc)
+                try:
+                    audio.stop_recording(handle.pid, handle.process)
+                except Exception:  # pragma: no cover - best-effort failure cleanup
+                    pass
+                return 1
         session = state.Session(
             session_id=session_id,
             pid=handle.pid,
@@ -351,6 +454,8 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             mode=mode.name,
             whisper=cfg.whisper.to_dict(),
             llm=cfg.llm.to_session_dict(),
+            player_context_file=_PLAYER_CONTEXT_FILENAME if player_context else None,
+            player_context_sha256=player_context[2] if player_context else None,
         )
         state.save_session(session)
         session_archive.save_manifest(session, mode=mode)
@@ -502,7 +607,11 @@ def _process_session(
     logger.info("Summarizing via LiteLLM (model=%s, endpoint=%s)...", llm_cfg.model, llm_cfg.endpoint)
     try:
         mode = modes.get_mode(session.mode)
-        summaries = summarize.summarize_mode(transcript, llm_cfg, mode)
+        player_context = _context_for_mode(session, mode)
+        summaries = summarize.summarize_mode(
+            transcript, llm_cfg, mode,
+            player_context=player_context[1] if player_context else None,
+        )
         output_paths = summarize.save_mode_summaries(summaries, session_dir, mode)
         summary_path = output_paths[-1]
         summary = summaries[0][1]
@@ -587,6 +696,19 @@ def _resolve_completed_session(args: argparse.Namespace, cfg: config_mod.AppConf
     mode_name = args.mode or saved.get("mode")
     if not isinstance(mode_name, str):
         raise MeetingRecorderError("Saved session mode metadata is missing.")
+    player_context = saved.get("player_context")
+    if player_context is not None and not isinstance(player_context, dict):
+        raise MeetingRecorderError("Saved player context metadata is malformed.")
+    context_file = player_context.get("file") if player_context else None
+    context_hash = player_context.get("sha256") if player_context else None
+    if (context_file is None) != (context_hash is None):
+        raise MeetingRecorderError("Saved player context metadata is incomplete.")
+    if context_file is not None and (
+        not isinstance(context_file, str)
+        or Path(context_file).name != context_file
+        or not isinstance(context_hash, str)
+    ):
+        raise MeetingRecorderError("Saved player context metadata is malformed.")
     return state.Session(
         session_id=saved.get("session_id", args.session),
         pid=0,
@@ -608,16 +730,20 @@ def _resolve_completed_session(args: argparse.Namespace, cfg: config_mod.AppConf
         transcript_file=str(_safe_manifest_file(session_dir, saved.get("transcript_file"), "transcript.txt")),
         summary_file=saved.get("summary_file"),
         capture_report=saved.get("capture_report"),
+        player_context_file=context_file,
+        player_context_sha256=context_hash,
     ), manifest
 
 
-def _backup_reprocess_inputs(session_dir: Path, filenames: set[str]) -> Path | None:
+def _backup_reprocess_inputs(
+    session_dir: Path, filenames: set[str], player_context: bytes | None = None
+) -> Path | None:
     existing = [
         session_dir / name
         for name in sorted(filenames)
         if (session_dir / name).is_file() and not (session_dir / name).is_symlink()
     ]
-    if not existing:
+    if not existing and player_context is None:
         return None
     history_root = session_dir / ".reprocess-history"
     if history_root.is_symlink() or (history_root.exists() and not history_root.is_dir()):
@@ -627,6 +753,8 @@ def _backup_reprocess_inputs(session_dir: Path, filenames: set[str]) -> Path | N
     destination.mkdir(parents=True, exist_ok=False)
     for path in existing:
         shutil.copy2(path, destination / path.name)
+    if player_context is not None:
+        _write_private_context(destination / _PLAYER_CONTEXT_FILENAME, player_context)
     return destination
 
 
@@ -648,6 +776,9 @@ def cmd_reprocess(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
             raise MeetingRecorderError("--mode cannot be combined with a different saved prompt.")
     else:
         mode = modes.get_mode(session.mode)
+
+    player_context = _context_for_mode(session, mode, getattr(args, "player_context", None))
+    context_override = getattr(args, "player_context", None) is not None
 
     session_dir = Path(session.session_dir)
     transcript_path = Path(session.transcript_file or session_dir / "transcript.txt")
@@ -673,13 +804,18 @@ def cmd_reprocess(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         except OSError as exc:
             raise MeetingRecorderError(f"Could not read transcript at {transcript_path}: {exc}") from exc
     logger.info("Regenerating %s documents with the %s prompt...", session.session_id, mode.name)
-    summaries = summarize.summarize_mode(transcript, llm_cfg, mode)
+    summaries = summarize.summarize_mode(
+        transcript, llm_cfg, mode,
+        player_context=player_context[1] if player_context else None,
+    )
     backup_names = {"transcript.txt"} if args.retranscribe else set()
     backup_names.update(artifact.filename for artifact in mode.artifacts)
     unsafe_outputs = [session_dir / name for name in backup_names if (session_dir / name).is_symlink()]
     if unsafe_outputs:
         raise MeetingRecorderError(f"Refusing to replace output symlink: {unsafe_outputs[0]}")
-    history_dir = _backup_reprocess_inputs(session_dir, backup_names)
+    history_dir = _backup_reprocess_inputs(
+        session_dir, backup_names, player_context[0] if context_override and player_context else None
+    )
     if args.retranscribe:
         transcript_path = transcribe.save_transcript(transcript, session_dir)
     output_paths = summarize.save_mode_summaries(summaries, session_dir, mode)
@@ -693,6 +829,17 @@ def cmd_reprocess(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
         "mode": mode.name,
         "history_dir": str(history_dir.relative_to(session_dir)) if history_dir else None,
         "outputs": [path.name for path in output_paths],
+        "player_context": (
+            {
+                "source": "override" if context_override else "session_snapshot",
+                "sha256": player_context[2],
+                "history_file": (
+                    str((history_dir / _PLAYER_CONTEXT_FILENAME).relative_to(session_dir))
+                    if context_override and history_dir else None
+                ),
+            }
+            if player_context else None
+        ),
     }
     session_archive.save_manifest(session, mode=mode, status="completed", reprocess_run=run)
     print(f"Reprocessed {session.session_id}.")

@@ -45,6 +45,10 @@ def _session_payload(session: state.Session, status: str | None = None) -> dict[
         "transcript_file": _basename(session.transcript_file),
         "summary_file": _basename(session.summary_file),
         "capture_report": _basename(session.capture_report),
+        "player_context": (
+            {"file": session.player_context_file, "sha256": session.player_context_sha256}
+            if session.player_context_file else None
+        ),
         "whisper": dict(session.whisper),
         "llm": dict(session.llm),
         "last_error": session.last_error,

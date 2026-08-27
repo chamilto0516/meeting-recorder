@@ -37,5 +37,7 @@
   instead of treating them as meetings.
 - [x] Add tabletop-RPG outputs for a DM continuity brief, player recap, and
   combined archive; validate game mode with a successful real-world session.
+- [x] Add a separate `game-player` mode with optional private character context,
+  player notes, and reviewed context-update suggestions without changing game mode.
 - [x] Replace lossy long-transcript map/reduce summarization with one
   full-context LLM call per mode, including strict multi-artifact parsing.

@@ -133,6 +133,11 @@ meeting-recorder start --mode cbt
 # record a tabletop-RPG game: one DM mic plus player/system audio
 meeting-recorder start --mode game --name "The Ruins of Asterfall"
 
+# record as a player: your mic plus call/VTT audio, with optional private context
+meeting-recorder start --mode game-player \
+  --player-context examples/game-player-context.md \
+  --name "The Ruins of Asterfall"
+
 # record spoken thoughts from the microphone only
 meeting-recorder start --mode journal --name "Sunday reflection"
 ```
@@ -224,11 +229,38 @@ creates `dm-continuity-brief.md`, `player-recap.md`, and an archival combined
 `game-summary.md`. The transcript remains mixed deliberately: the prompt does
 not trust speaker diarization when audio overlaps or a microphone hears output.
 
+### Tabletop-RPG player mode
+
+`--mode game-player` is a separate, player-focused online-play mode. It records
+one local microphone plus system audio (normally your headset mic and the
+voice-call/VTT output), then creates a shareable `player-recap.md` and private
+`character-notebook.md` and `context-updates.md` files. It is not an in-person
+table-capture mode: system audio is required and only one microphone is allowed.
+
+Pass optional character and campaign reference material with `--player-context
+PATH`. The file must be UTF-8 Markdown; an adaptable starting template is in
+[`examples/game-player-context.md`](examples/game-player-context.md). The
+recorder copies its exact contents to a private `player-context.md` snapshot in
+the session so retries and normal reprocessing use the same context. To
+regenerate an old session with revised notes, use:
+
+```bash
+meeting-recorder reprocess SESSION_ID --player-context updated-character.md
+```
+
+That explicit override is saved privately with that reprocessing run and does
+not replace the original snapshot. Player context, private notebook, and context
+updates may contain character secrets; they are written owner-readable only.
+They are included in the same summarization request sent to your configured LLM,
+so use a local endpoint or provider you trust with that information. The
+shareable recap is instructed never to reveal unrevealed personal secrets.
+
 ### Recording modes
 
 `start --mode MODE` selects a packaged mode and defaults to `meeting`. The
 built-in modes are `meeting` (mic + system audio), `game` (one mic + system
-audio), `lecture` and `cbt` (system audio only), and `journal` (one mic only).
+audio), `game-player` (one mic + system), `lecture` and `cbt` (system audio
+only), and `journal` (one mic only).
 Their capture rules, output files, and prompt assets are defined in
 `meeting_recorder/modes/modes.yaml`; adding a manifest entry and its `.md`
 prompt makes another mode selectable. `--game` and `--lecture` remain
@@ -238,6 +270,7 @@ deprecated aliases for compatibility.
 | --- | --- | --- |
 | `meeting` | one or more mics + system | `summary.md` |
 | `game` | one mic + system | DM brief, player recap, and `game-summary.md` |
+| `game-player` | one mic + system | shareable recap, private character notebook, private context updates |
 | `lecture` | system only | `lecture-notes.md` |
 | `cbt` | system only | `cbt-notes.md` |
 | `journal` | one mic only | `journal.md` |
@@ -265,6 +298,7 @@ ffmpeg.log        # ffmpeg's own log for that session
 capture-validation.json  # per-track WAV format/duration validation report
 transcript.txt    # faster-whisper output
 summary.md or mode-specific Markdown outputs
+player-context.md  # private character/campaign snapshot for game-player sessions
 session.json      # durable non-secret metadata and original mode/prompt snapshot
 .reprocess-history/  # previous outputs retained when a session is reprocessed
 ```

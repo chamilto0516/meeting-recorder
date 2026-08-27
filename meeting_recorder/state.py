@@ -22,8 +22,8 @@ import unicodedata
 from meeting_recorder.errors import StateError
 
 APP_NAME = "meeting-recorder"
-STATE_VERSION = 5
-SUPPORTED_STATE_VERSIONS = {2, 3, 4, STATE_VERSION}
+STATE_VERSION = 6
+SUPPORTED_STATE_VERSIONS = {2, 3, 4, 5, STATE_VERSION}
 SESSION_STATUSES = {"recording", "recorded", "transcribed", "capture_failed"}
 MODE_NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -96,6 +96,8 @@ class Session:
     transcript_file: Optional[str] = None
     summary_file: Optional[str] = None
     capture_report: Optional[str] = None
+    player_context_file: Optional[str] = None
+    player_context_sha256: Optional[str] = None
     last_error: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,6 +129,12 @@ class Session:
             raise StateError("Session state contains a credential and was not used.")
         if session.status not in SESSION_STATUSES:
             raise StateError("Session state has an unsupported status and was not used.")
+        if (
+            (session.player_context_file is None) != (session.player_context_sha256 is None)
+            or (session.player_context_file is not None and not isinstance(session.player_context_file, str))
+            or (session.player_context_sha256 is not None and not isinstance(session.player_context_sha256, str))
+        ):
+            raise StateError("Session state has malformed player context metadata and was not used.")
         # Loading state must not depend on the current registry: a mode could
         # be renamed after recording, and the user must still be able to stop
         # and recover that session. Registry lookup happens during processing.

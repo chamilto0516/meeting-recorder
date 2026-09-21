@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -237,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Deprecated alias for '--mode game'",
     )
+    start_p.add_argument(
+        "--no-indicator",
+        dest="no_indicator",
+        action="store_true",
+        help="Do not launch the tray status indicator (also honors MEETING_RECORDER_NO_INDICATOR).",
+    )
     _add_common_processing_args(start_p)
     start_p.set_defaults(func=cmd_start)
 
@@ -336,6 +343,28 @@ def _configure_logging(verbose: bool) -> None:
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+def _launch_indicator(args: argparse.Namespace) -> None:
+    """Best-effort spawn of the tray status indicator; never fails a recording."""
+    try:
+        if getattr(args, "no_indicator", False):
+            return
+        if os.environ.get("MEETING_RECORDER_NO_INDICATOR"):
+            return
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return
+        executable = shutil.which("meeting-recorder-indicator")
+        if executable is None:
+            return
+        subprocess.Popen(
+            [executable, "--exit-when-idle"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        logger.debug("Could not launch the tray indicator.", exc_info=True)
 
 
 def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
@@ -462,6 +491,7 @@ def cmd_start(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
 
         logger.info("Recording started (pid %s).", handle.pid)
         logger.info("Run 'meeting-recorder stop' when the meeting ends.")
+        _launch_indicator(args)
         return 0
 
 

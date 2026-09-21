@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Meeting Recorder Indicator
+Comment=Show a status-bar icon while meeting-recorder is recording
+Exec=meeting-recorder-indicator
+Icon=audio-input-microphone-symbolic
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

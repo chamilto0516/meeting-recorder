@@ -145,6 +145,13 @@ meeting-recorder start --mode journal --name "Sunday reflection"
 Join your Zoom/Meet/browser call as usual -- capture is independent of which
 app is making the sound.
 
+If the optional `gui` extra is installed (`pip install -e '.[gui]'`) and a
+display is available, `start` also raises a small status-bar indicator: a
+slow gray-to-red pulse while recording, with a right-click Stop. It closes on
+its own once the session finishes. Skip it with `--no-indicator` or
+`MEETING_RECORDER_NO_INDICATOR=1`; see [`gui/README.md`](gui/README.md) for
+running it as a persistent login item instead.
+
 ### 3. Stop, transcribe, and summarize
 
 ```bash

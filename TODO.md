@@ -6,7 +6,6 @@
 - [x] Smart mic and output selection: `--mic`/`--system-source` accept live short selectors, aliases, and safe close matches; optional LLM help is explicit and validated.
 - [ ] End-to-end mode tests: Exercise every packaged mode with real audio, including a multi-hour game capture and representative lecture, CBT, journal, and meeting sessions; review documents and capture validity.
 - [ ] Separate player prompt: Explore extracting the game-mode player recap into its own externally editable prompt while preserving the mode system’s combined game output.
-- [ ] Recording status indicator: Detect an active recording and show a slow gray-to-red flashing status-bar indicator; offer a right-click `Stop` action that runs the parameterless stop command.
 
 ## Reliability and safety backlog
 
@@ -21,6 +20,7 @@
 
 ## Completed
 
+- [x] Recording status indicator: Detect an active recording and show a slow gray-to-red flashing status-bar indicator; offer a right-click `Stop` action that runs the parameterless stop command.
 - [x] Add a safe `cleanup` command with 7-day raw-track and 14-day mixed-audio retention defaults, a size-aware preview, explicit confirmation/dry-run automation, race checks, and protection for active, retryable, failed, unknown, or unsafe sessions.
 - [x] Add durable per-session metadata and mode prompt snapshots, plus `reprocess` support for current-prompt document regeneration or optional mixed-audio retranscription while preserving prior outputs.
 - [x] Build a local GUI that uses the CLI/session lifecycle to start, stop, and monitor recordings, name sessions, open outputs, and report when processing is ready.

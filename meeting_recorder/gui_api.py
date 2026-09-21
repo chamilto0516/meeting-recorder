@@ -74,7 +74,7 @@ def _args(**values) -> Namespace:
     defaults = dict(
         config=None, data_dir=None, verbose=False, mode="meeting", mics=None,
         device_config=None, system_source=None, sample_rate=None, meeting_name=None, lecture=False, game=False,
-        player_context=None,
+        player_context=None, no_indicator=True,
         allow_llm_device_selection=False,
         skip_transcription=False, skip_summary=False, whisper_model=None,
         whisper_device=None, whisper_compute_type=None, language=None, llm_model=None,

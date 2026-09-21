@@ -8,15 +8,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
-    QFileDialog, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
-    QStackedWidget, QStyle, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QFileDialog, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QRadioButton,
+    QStackedWidget, QStyle, QVBoxLayout, QWidget,
 )
 from shiboken6 import isValid
 
 from meeting_recorder import gui_api
+from meeting_recorder_panel.tray import TrayController, release_tray_lock, tray_lock
 
 BG, SURFACE, TEXT, ACCENT, TINT, DARK, BORDER = (
     "#f2f2f3", "#e9e9ea", "#1d1f20", "#5980a6", "#eef6ff", "#1d2d3d", "#c9c9cb"
@@ -58,7 +59,6 @@ class Panel(QWidget):
         self.second_enabled = False
         self.microphones, self.systems = [], []
         self.timer = QTimer(self); self.timer.timeout.connect(self._tick)
-        self.pulse_timer = QTimer(self); self.pulse_timer.timeout.connect(self._pulse); self.pulse_on = True
         # Query the same PipeWire/Pulse sources as `meeting-recorder list-devices`
         # before building the controls, so combo-box data holds usable source IDs.
         self.refresh_devices()
@@ -102,7 +102,6 @@ class Panel(QWidget):
         elif self.phase == "recording": self._recording()
         elif self.phase == "processing": self._processing()
         else: self._done()
-        self._set_tray_status()
 
     def _idle(self):
         self.mic1 = QComboBox(); self.mic2 = QComboBox(); self.system = QComboBox(); self._populate_devices()
@@ -200,11 +199,21 @@ class Panel(QWidget):
 
     @Slot(object)
     def started(self, session):
-        self.active = session; self.elapsed_seconds = max(0, int((datetime.now(timezone.utc) - session.started_at).total_seconds())); self.phase = "recording"; self.timer.start(1000); self.pulse_timer.start(700); self.render_phase()
+        self.active = session; self.elapsed_seconds = max(0, int((datetime.now(timezone.utc) - session.started_at).total_seconds())); self.phase = "recording"; self.timer.start(1000); self.render_phase()
 
     def process(self, retry):
-        self.timer.stop(); self.phase = "processing"; self.render_phase(); self.pulse_timer.start(700)
+        self.timer.stop(); self.phase = "processing"; self.render_phase()
         self._run(gui_api.stop_or_retry, retry, complete=self._processing_done, processing=True)
+
+    def stop_from_tray(self):
+        if self.active is None:
+            # The tray polls state independently, so it can learn about a
+            # CLI-started recording before this panel's own UI ever does.
+            session = gui_api.active_session()
+            if session is None:
+                return
+            self.started(session)
+        self.process(False)
 
     @Slot(str, int)
     def _apply_progress(self, stage, percent):
@@ -214,18 +223,16 @@ class Panel(QWidget):
 
     @Slot(object)
     def _processing_done(self, _result):
-        self.result_status = "done"; self.phase = "done"; self.pulse_timer.stop(); self.render_phase()
+        self.result_status = "done"; self.phase = "done"; self.render_phase()
 
     @Slot(str)
     def failed(self, message):
-        self.pulse_timer.stop()
         if self.active is not None:
             self.result_status = "problem"; self.phase = "done"; self.render_phase()
         else:
             self.phase = "idle"; self.render_phase()
     def reset(self): self.active = None; self.elapsed_seconds = 0; self.result_status = "done"; self.phase = "idle"; self.render_phase()
     def _tick(self): self.elapsed_seconds += 1; self.render_phase()
-    def _pulse(self): self.pulse_on = not self.pulse_on; self._set_tray_status()
     def _format_time(self, seconds): return f"{seconds // 60:02d}:{seconds % 60:02d}"
     def _mic_summary(self): return ", ".join(self.active.mics) if self.active and self.active.mics else "System audio"
 
@@ -268,10 +275,6 @@ class Panel(QWidget):
     def focusOutEvent(self, event):
         if not self.underMouse(): self.hide()
         super().focusOutEvent(event)
-    def _set_tray_status(self):
-        if hasattr(self, "tray"):
-            label = {"idle":"Ready", "recording":"Recording", "processing":"Processing", "done":"Done"}[self.phase]
-            self.tray.setIcon(tray_icon(self.phase, self.pulse_on)); self.tray.setToolTip(f"Meeting Recorder — {label}")
 
     def _run(self, action, *args, complete, processing=False, **kwargs):
         self.worker_thread = QThread(self); worker = Worker(action, *args, processing=processing, **kwargs); self.worker = worker; worker.moveToThread(self.worker_thread)
@@ -282,21 +285,26 @@ class Panel(QWidget):
         self.worker_thread.finished.connect(worker.deleteLater); self.worker_thread.finished.connect(lambda: setattr(self, "worker", None)); self.worker_thread.start()
 
 
-def tray_icon(phase, bright=True):
-    pixmap = QPixmap(22, 22); pixmap.fill(Qt.GlobalColor.transparent); painter = QPainter(pixmap)
-    color = QColor("#b7b7ba" if phase == "idle" else ACCENT); color.setAlpha(255 if bright else 70)
-    painter.setBrush(color); painter.setPen(Qt.PenStyle.NoPen); painter.drawEllipse(5, 5, 12, 12); painter.end(); return QIcon(pixmap)
-
-
 def main():
     app = QApplication(sys.argv); app.setApplicationName("Meeting Recorder")
     app.setStyleSheet(f"""QWidget#panel {{ background:{BG}; color:{TEXT}; border:1px solid {BORDER}; }} QLabel {{ font-family: Barlow, sans-serif; }} QComboBox,QLineEdit,QPushButton {{ min-height:34px; padding:4px 9px; background:{SURFACE}; border:1px solid {BORDER}; border-radius:4px; }} QPushButton#primary {{ background:{ACCENT}; color:{BG}; border-color:{ACCENT}; font-weight:bold; }} QPushButton#ghost {{ color:{ACCENT}; border:0; background:transparent; text-align:left; }} QRadioButton {{ padding:7px 3px; background:{SURFACE}; border:1px solid {BORDER}; }} QRadioButton::indicator {{ width:0; }} QRadioButton:checked {{ background:{ACCENT}; color:{BG}; }} QLabel#timer {{ font-size:28px; font-weight:bold; color:{DARK}; padding:16px; background:{TINT}; border:1px solid {ACCENT}; }} QLabel#status-good,QLabel#status-problem {{ min-height:32px; font-weight:bold; padding:5px 10px; }} QLabel#status-good {{ background:{SUCCESS}; color:white; }} QLabel#status-problem {{ background:{PROBLEM}; color:white; }} QLabel#muted {{ color:#6f7072; font-size:12px; }} QListWidget {{ border:0; background:transparent; }}""")
-    panel = Panel(); tray = QSystemTrayIcon(tray_icon("idle"), app); panel.tray = tray
-    def toggle(reason):
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            panel.hide() if panel.isVisible() else panel.show_under_tray(tray)
-    tray.activated.connect(toggle)
-    menu = QMenu(); menu.addAction("Open", lambda: panel.show_under_tray(tray)); menu.addAction("Exit", app.quit); tray.setContextMenu(menu); tray.show()
+    panel = Panel()
+    # Whoever holds the tray lock owns the visible icon; if an indicator
+    # process already has it, this panel runs window-only, no tray.
+    lock_fd = tray_lock()
+    if lock_fd is not None:
+        app.aboutToQuit.connect(lambda: release_tray_lock(lock_fd))
+        controller = TrayController(app)
+
+        def open_panel():
+            panel.hide() if panel.isVisible() else panel.show_under_tray(controller.tray)
+        controller.open_requested.connect(open_panel)
+
+        def handle_stop():
+            controller.stopping(); panel.stop_from_tray()
+        controller.stop_requested.connect(handle_stop)
+    else:
+        panel.show(); panel.raise_(); panel.activateWindow()
     return app.exec()
 
 

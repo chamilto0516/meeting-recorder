@@ -38,3 +38,35 @@ class PanelLayoutTests(unittest.TestCase):
         self.assertIn("Open Output Folder", text)
         self.assertNotIn("Stop Recording", text)
         panel.deleteLater()
+
+    @patch("meeting_recorder_panel.app.gui_api.devices", return_value=([], []))
+    @patch("meeting_recorder_panel.app.gui_api.active_session")
+    @patch.object(Panel, "_run")
+    def test_stop_from_tray_adopts_a_cli_started_session_before_stopping(self, run, active_session, _devices):
+        # A recording started from the CLI while the panel sits idle leaves
+        # panel.active unset; the tray polls independently and can learn
+        # about it first, so `stop_from_tray` must adopt the session before
+        # asking the panel to stop it (otherwise `_done()` later crashes on
+        # `self.active.name`).
+        session = ActiveSession(
+            phase="recording", session_id="cli-started", name="CLI session", mode="meeting",
+            mics=["mic"], system_source="system.monitor", started_at=datetime.now(timezone.utc),
+            directory=Path("/tmp/session"),
+        )
+        active_session.side_effect = [None, session]  # None at construction, found on stop
+        panel = Panel()
+        self.assertIsNone(panel.active)
+        panel.stop_from_tray()
+        self.assertIsNotNone(panel.active)
+        self.assertEqual(panel.active.session_id, "cli-started")
+        self.assertEqual(panel.phase, "processing")
+        run.assert_called_once()
+        panel.deleteLater()
+
+    @patch("meeting_recorder_panel.app.gui_api.devices", return_value=([], []))
+    @patch("meeting_recorder_panel.app.gui_api.active_session", return_value=None)
+    def test_stop_from_tray_is_a_noop_without_an_active_session(self, _active_session, _devices):
+        panel = Panel()
+        panel.stop_from_tray()
+        self.assertEqual(panel.phase, "idle")
+        panel.deleteLater()

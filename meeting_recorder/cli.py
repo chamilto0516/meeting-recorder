@@ -602,6 +602,7 @@ def _process_session(
     llm_cfg = replace(
         config_mod.LLMConfig.from_dict(session.llm), api_key=cfg.llm.api_key
     )
+    llm_cfg = config_mod.llm_for_mode(llm_cfg, cfg.llm_mode_overrides, session.mode)
     llm_cfg = config_mod.override_llm(llm_cfg, args)
     session_dir = Path(session.session_dir)
 
@@ -817,9 +818,11 @@ def cmd_reprocess(args: argparse.Namespace, cfg: config_mod.AppConfig) -> int:
     whisper_cfg = config_mod.override_whisper(
         config_mod.WhisperConfig.from_dict(session.whisper), args
     )
-    llm_cfg = config_mod.override_llm(
-        replace(config_mod.LLMConfig.from_dict(session.llm), api_key=cfg.llm.api_key), args
+    llm_cfg = config_mod.llm_for_mode(
+        replace(config_mod.LLMConfig.from_dict(session.llm), api_key=cfg.llm.api_key),
+        cfg.llm_mode_overrides, mode.name,
     )
+    llm_cfg = config_mod.override_llm(llm_cfg, args)
     if args.retranscribe:
         mixed_file = Path(session.mixed_file)
         if not mixed_file.is_file() or mixed_file.is_symlink() or mixed_file.stat().st_size == 0:

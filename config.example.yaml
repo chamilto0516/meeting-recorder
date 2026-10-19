@@ -52,12 +52,21 @@ llm:
   api_key: null
   # Optional provider-supported reasoning setting, e.g. high for GPT-5.6 Luna.
   reasoning_effort: null
+  # Optional provider-supported verbosity setting (e.g. high), forwarded when set.
+  verbosity: null
+  # Optional per-mode overrides of model / reasoning_effort / verbosity.
+  # mode_overrides:
+  #   game:
+  #     model: openai/REASONING-gpt61sol-c3
+  #   game-player:
+  #     model: openai/REASONING-gpt61sol-c3
+  mode_overrides: {}
 
 # Example: route summaries through the Owlbear LiteLLM alias supplied by your
 # proxy configuration. Replace the endpoint and api_key with that proxy's URL
 # and credentials; the supplied model_list itself does not declare them.
 # llm:
-#   model: REASONING-gpt56luna-c1
+#   model: REASONING-gpt6luna-c1
 #   endpoint: http://your-litellm-proxy:4000/v1
 #   api_key: null
 #   reasoning_effort: high

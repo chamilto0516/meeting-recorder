@@ -155,6 +155,22 @@ class SummaryOutputTests(unittest.TestCase):
         self.assertEqual(fake_litellm.completion.call_args.kwargs["model"], "REASONING-gpt56luna-c1")
         self.assertEqual(fake_litellm.completion.call_args.kwargs["reasoning_effort"], "high")
 
+    def test_call_llm_forwards_configured_verbosity(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "choices": [{"message": {"content": "# Meeting Summary\n\nDone."}}]
+        })
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            summarize._call_llm("Prompt", "Transcript", config.LLMConfig(verbosity="high"))
+        self.assertEqual(fake_litellm.completion.call_args.kwargs["verbosity"], "high")
+
+    def test_llm_for_mode_applies_only_matching_override(self) -> None:
+        base = config.LLMConfig(model="luna", api_key="k", reasoning_effort="high")
+        overrides = {"game": {"model": "sol", "api_key": "ignored"}}
+        game = config.llm_for_mode(base, overrides, "game")
+        self.assertEqual((game.model, game.api_key, game.reasoning_effort), ("sol", "k", "high"))
+        self.assertEqual(config.llm_for_mode(base, overrides, "meeting"), base)
+
     def test_call_llm_extracts_responses_api_output_without_reasoning(self) -> None:
         fake_litellm = types.ModuleType("litellm")
         fake_litellm.completion = Mock(return_value={

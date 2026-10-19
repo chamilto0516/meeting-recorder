@@ -41,6 +41,8 @@ DEFAULTS: dict[str, Any] = {
         "endpoint": "http://localhost:11434",
         "api_key": None,
         "reasoning_effort": None,
+        "verbosity": None,
+        "mode_overrides": {},
     },
     "cleanup": {
         "raw_audio_days": 7,
@@ -75,6 +77,7 @@ class LLMConfig:
     endpoint: str = "http://localhost:11434"
     api_key: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    verbosity: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +85,7 @@ class LLMConfig:
             "endpoint": self.endpoint,
             "api_key": self.api_key,
             "reasoning_effort": self.reasoning_effort,
+            "verbosity": self.verbosity,
         }
 
     def to_session_dict(self) -> dict[str, Any]:
@@ -128,6 +132,7 @@ class AppConfig:
     sample_rate: int
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    llm_mode_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     device_config: Path | None = None
     device_aliases: dict[str, str] = field(default_factory=dict)
     cleanup: CleanupConfig = field(default_factory=CleanupConfig)
@@ -287,11 +292,17 @@ def load_config(args: Any) -> AppConfig:
         {} if getattr(args, "command", None) == "devices" and getattr(args, "devices_command", None) == "init"
         else load_device_aliases(Path(device_config))
     )
+    mode_overrides = merged["llm"].get("mode_overrides") or {}
+    if not isinstance(mode_overrides, dict) or not all(
+        isinstance(v, dict) for v in mode_overrides.values()
+    ):
+        raise ConfigError("llm.mode_overrides must be a mapping of mode name to LLM settings.")
     return AppConfig(
         data_dir=data_dir,
         sample_rate=int(merged["audio"]["sample_rate"]),
         whisper=WhisperConfig.from_dict(merged["whisper"]),
         llm=LLMConfig.from_dict(merged["llm"]),
+        llm_mode_overrides=mode_overrides,
         device_config=Path(device_config),
         device_aliases=aliases,
         cleanup=CleanupConfig.from_dict(merged.get("cleanup", {})),
@@ -321,4 +332,10 @@ def override_llm(config: LLMConfig, args: Any) -> LLMConfig:
         updates["endpoint"] = args.llm_endpoint
     if getattr(args, "llm_api_key", None):
         updates["api_key"] = args.llm_api_key
+    return replace(config, **updates) if updates else config
+
+
+def llm_for_mode(config: LLMConfig, overrides: dict[str, dict[str, Any]], mode: str) -> LLMConfig:
+    """Apply the `llm.mode_overrides` entry for `mode`, if any, to the base LLM config."""
+    updates = {k: v for k, v in (overrides.get(mode) or {}).items() if k in _fields(LLMConfig) and k != "api_key"}
     return replace(config, **updates) if updates else config

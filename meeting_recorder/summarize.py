@@ -113,6 +113,8 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
         )
         if config.reasoning_effort:
             request["reasoning_effort"] = config.reasoning_effort
+        if config.verbosity:
+            request["verbosity"] = config.verbosity
         response = litellm.completion(**request)
         return _extract_response_text(response)
     except Exception as exc:  # noqa: BLE001 - surface as our own error type

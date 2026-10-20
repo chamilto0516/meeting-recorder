@@ -100,6 +100,7 @@ class DeviceSelectionTests(unittest.TestCase):
                 llm=config.LLMConfig(reasoning_effort="high"),
             )
         self.assertEqual(completion.call_args.kwargs["reasoning_effort"], "high")
+        self.assertEqual(completion.call_args.kwargs["allowed_openai_params"], ["reasoning_effort"])
 
     def test_llm_invalid_candidate_is_rejected(self):
         fake_llm = SimpleNamespace(completion=lambda **_: {"choices": [{"message": {"content": '{"selector": "o1"}'}}]})

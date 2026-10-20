@@ -115,6 +115,11 @@ def _call_llm(system_prompt: str, user_prompt: str, config: LLMConfig) -> str:
             request["reasoning_effort"] = config.reasoning_effort
         if config.verbosity:
             request["verbosity"] = config.verbosity
+        # Proxy aliases (e.g. REASONING-*) are unknown to LiteLLM's client-side
+        # param check, so explicitly allow the params we were asked to send.
+        passthrough = [k for k in ("reasoning_effort", "verbosity") if k in request]
+        if passthrough:
+            request["allowed_openai_params"] = passthrough
         response = litellm.completion(**request)
         return _extract_response_text(response)
     except Exception as exc:  # noqa: BLE001 - surface as our own error type

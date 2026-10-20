@@ -234,6 +234,8 @@ def resolve_with_llm(
         )
         if llm.reasoning_effort:
             request["reasoning_effort"] = llm.reasoning_effort
+            # Proxy aliases are unknown to LiteLLM's client-side param check.
+            request["allowed_openai_params"] = ["reasoning_effort"]
         response = litellm.completion(**request)
         parsed = json.loads(_response_text(response))
         selector = parsed.get("selector") if isinstance(parsed, dict) else None

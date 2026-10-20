@@ -164,6 +164,28 @@ class SummaryOutputTests(unittest.TestCase):
             summarize._call_llm("Prompt", "Transcript", config.LLMConfig(verbosity="high"))
         self.assertEqual(fake_litellm.completion.call_args.kwargs["verbosity"], "high")
 
+    def test_call_llm_allows_forwarded_params_for_proxy_aliases(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "choices": [{"message": {"content": "# Meeting Summary\n\nDone."}}]
+        })
+        llm = config.LLMConfig(reasoning_effort="high", verbosity="low")
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            summarize._call_llm("Prompt", "Transcript", llm)
+        self.assertEqual(
+            fake_litellm.completion.call_args.kwargs["allowed_openai_params"],
+            ["reasoning_effort", "verbosity"],
+        )
+
+    def test_call_llm_omits_allowed_params_when_none_configured(self) -> None:
+        fake_litellm = types.ModuleType("litellm")
+        fake_litellm.completion = Mock(return_value={
+            "choices": [{"message": {"content": "# Meeting Summary\n\nDone."}}]
+        })
+        with patch.dict("sys.modules", {"litellm": fake_litellm}):
+            summarize._call_llm("Prompt", "Transcript", config.LLMConfig())
+        self.assertNotIn("allowed_openai_params", fake_litellm.completion.call_args.kwargs)
+
     def test_llm_for_mode_applies_only_matching_override(self) -> None:
         base = config.LLMConfig(model="luna", api_key="k", reasoning_effort="high")
         overrides = {"game": {"model": "sol", "api_key": "ignored"}}
